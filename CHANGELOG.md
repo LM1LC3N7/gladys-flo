@@ -12,44 +12,24 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Flo by Moen account through its e-mail and password: the Flo sign-in, the
+  Moen (Smartwater app) sign-in, or both in turn (default); token renewed
+  before it expires and once when refused; a refused sign-in is reported and
+  never retried by itself.
+- Smart Water Shutoff: valve, Away mode switch, mode (home, away, sleep), flow
+  rate, water pressure, water temperature, today's consumption and a leak or
+  flow alert.
+- Water Sensor: water leak, temperature, humidity and battery.
+- Opening and closing the valve are off by default, each behind its own
+  option; a valve command runs one at a time per device, on the state read
+  from Flo just before, and is refused when the valve is offline, moving or
+  unknown.
+- Home and Away from Gladys (switch and scene action).
+- Scene triggers on new leak, abnormal flow and other Flo alerts; scene
+  actions to set Home or Away and to open or close the valve.
+- Refresh every 2 minutes (1 to 60), pauses after errors and on HTTP 429,
+  badges for offline devices.
+- "Test the connection" button with a summary of the account.
+- Feature names in French or English.
 
-### Changed
-
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
-
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-flo/commits/main

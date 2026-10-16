@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "id": 10,
+      "name": "fast_water_flow",
+      "displayName": "Fast Water Flow",
+      "severity": "critical",
+      "isShutoff": true
+    },
+    {
+      "id": 11,
+      "name": "high_water_usage",
+      "displayName": "High Water Usage",
+      "severity": "warning",
+      "isShutoff": true
+    },
+    {
+      "id": 28,
+      "name": "small_drip",
+      "displayName": "Small Drip Detected",
+      "severity": "warning",
+      "isShutoff": false
+    },
+    {
+      "id": 3,
+      "name": "health_test_skipped",
+      "displayName": "Health Test Skipped",
+      "severity": "info",
+      "isShutoff": false
+    },
+    {
+      "id": 100,
+      "name": "water_detected",
+      "displayName": "Water Detected",
+      "severity": "critical",
+      "isShutoff": false
+    }
+  ]
+}

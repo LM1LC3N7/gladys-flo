@@ -1,177 +1,593 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Flo by Moen",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Unofficial: Flo by Moen water shutoff and leak sensors, flow, pressure, alerts, Home/Away.",
+    "fr": "Non officiel : vanne d'arrêt et détecteurs de fuite Flo by Moen, débit, pression, alertes."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-flo:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-flo/main/cover.png",
+  "categories": ["security", "environment"],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Flo by Moen account",
+        "fr": "Votre compte Flo by Moen"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Brings the Flo by Moen Smart Water Shutoff (flow, pressure, water temperature, today's use, valve, Home/Away mode, alerts) and the Flo Water Sensors (leak, temperature, humidity, battery) into Gladys, through the Flo cloud the Moen Smartwater app uses (US and Canada products). Enter the e-mail and password of your Flo or Moen account. Scene triggers fire on new leak and abnormal flow alerts. Opening and closing the valve stay off until you allow them below. Unofficial, not affiliated with Moen or Fortune Brands; never tested on a real device yet.",
+        "fr": "Amène dans Gladys la vanne d'arrêt Flo by Moen Smart Water Shutoff (débit, pression, température de l'eau, consommation du jour, vanne, mode Maison/Absent, alertes) et les détecteurs de fuite Flo Water Sensor (fuite, température, humidité, batterie), par le cloud Flo qu'utilise l'application Moen Smartwater (produits des États-Unis et du Canada). Saisissez l'e-mail et le mot de passe de votre compte Flo ou Moen. Des déclencheurs de scène réagissent aux nouvelles alertes de fuite et de débit anormal. L'ouverture et la fermeture de la vanne restent désactivées tant que vous ne les autorisez pas ci-dessous. Non officiel, sans lien avec Moen ni Fortune Brands ; jamais testé sur un vrai appareil."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-flo/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-flo/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "email",
+      "type": "string",
+      "label": {
+        "en": "E-mail of the Flo account",
+        "fr": "E-mail du compte Flo"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.fr"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "password",
+      "type": "secret",
+      "label": {
+        "en": "Password",
+        "fr": "Mot de passe"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "description": {
+        "en": "Stored encrypted by Gladys, sent only to the Flo and Moen sign-in endpoints (HTTPS).",
+        "fr": "Stocké chiffré par Gladys, envoyé uniquement aux points de connexion Flo et Moen (HTTPS)."
+      },
+      "required": true
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
+      "key": "allow_valve_close",
+      "type": "boolean",
+      "label": {
+        "en": "Allow closing the valve from Gladys",
+        "fr": "Autoriser la fermeture de la vanne depuis Gladys"
+      },
+      "description": {
+        "en": "Off by default. Turn it on to shut the water off from a scene when a leak is detected.",
+        "fr": "Désactivé par défaut. Activez-le pour couper l'eau depuis une scène quand une fuite est détectée."
+      },
       "required": false,
-      "default": "celsius",
+      "default": false
+    },
+    {
+      "key": "allow_valve_open",
+      "type": "boolean",
+      "label": {
+        "en": "Allow opening the valve from Gladys",
+        "fr": "Autoriser l'ouverture de la vanne depuis Gladys"
+      },
+      "description": {
+        "en": "Off by default: reopening the water after a leak should be done on site.",
+        "fr": "Désactivé par défaut : rouvrir l'eau après une fuite devrait se faire sur place."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "login_method",
+      "type": "select",
+      "label": {
+        "en": "Sign-in",
+        "fr": "Identification"
+      },
+      "description": {
+        "en": "Automatic tries the Flo sign-in, then the Moen one (the newer Moen Smartwater accounts).",
+        "fr": "Automatique essaie l'identification Flo, puis celle de Moen (comptes Moen Smartwater récents)."
+      },
+      "required": false,
+      "default": "auto",
       "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
+        {
+          "value": "auto",
+          "label": {
+            "en": "Automatic",
+            "fr": "Automatique"
+          }
+        },
+        {
+          "value": "flo",
+          "label": {
+            "en": "Flo",
+            "fr": "Flo"
+          }
+        },
+        {
+          "value": "moen",
+          "label": {
+            "en": "Moen",
+            "fr": "Moen"
+          }
+        }
       ]
     },
     {
-      "key": "poll_frequency",
+      "key": "refresh_interval",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Refresh interval (min)",
+        "fr": "Intervalle de rafraîchissement (min)"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "How often every device is read, in minutes (1 to 60). Today's use is read every 15 minutes.",
+        "fr": "Fréquence de lecture de chaque appareil, en minutes (1 à 60). La consommation du jour est lue toutes les 15 minutes."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 2,
+      "min": 1,
+      "max": 60
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": {
+        "en": "Language of the feature names",
+        "fr": "Langue des noms des fonctionnalités"
+      },
+      "description": {
+        "en": "Used for the names of the features of the devices added from now on.",
+        "fr": "Sert aux noms des fonctionnalités des appareils ajoutés désormais."
+      },
+      "required": false,
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "description": {
+        "en": "Signs in and reads every device: homes, shutoffs, water sensors.",
+        "fr": "Se connecte et lit chaque appareil : logements, vannes, détecteurs de fuite."
+      },
+      "timeout_seconds": 60
     }
   ],
   "scene_triggers": [
     {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "leak_detected",
+      "label": {
+        "en": "Flo: leak detected",
+        "fr": "Flo : fuite détectée"
+      },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+        "en": "A Water Sensor detects water, or Flo raises a new leak alert (drip, failed health test).",
+        "fr": "Un détecteur Water Sensor détecte de l'eau, ou Flo lève une nouvelle alerte de fuite (goutte à goutte, test d'étanchéité échoué)."
       },
       "fields": [
         {
           "key": "device",
           "type": "select",
           "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
+          "required": false,
+          "label": {
+            "en": "Device (empty: any)",
+            "fr": "Appareil (vide : n'importe lequel)"
+          }
+        }
+      ],
+      "variables": [
+        {
+          "key": "device_name",
+          "type": "string",
+          "label": {
+            "en": "Device",
+            "fr": "Appareil"
+          }
         },
         {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
+          "key": "alarm_title",
+          "type": "string",
+          "label": {
+            "en": "Alert",
+            "fr": "Alerte"
+          }
+        },
+        {
+          "key": "severity",
+          "type": "string",
+          "label": {
+            "en": "Severity",
+            "fr": "Gravité"
+          }
+        },
+        {
+          "key": "source",
+          "type": "string",
+          "label": {
+            "en": "Source (sensor or alert)",
+            "fr": "Source (sensor ou alert)"
+          }
+        },
+        {
+          "key": "raised_at",
+          "type": "string",
+          "label": {
+            "en": "Seen at (ISO)",
+            "fr": "Vue à (ISO)"
+          }
+        }
+      ]
+    },
+    {
+      "key": "abnormal_flow",
+      "label": {
+        "en": "Flo: abnormal flow",
+        "fr": "Flo : débit anormal"
+      },
+      "description": {
+        "en": "Flo raises a new flow alert: fast water flow, long flow, high water use.",
+        "fr": "Flo lève une nouvelle alerte de débit : débit rapide, écoulement prolongé, forte consommation."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "required": false,
+          "label": {
+            "en": "Device (empty: any)",
+            "fr": "Appareil (vide : n'importe lequel)"
+          }
+        }
+      ],
+      "variables": [
+        {
+          "key": "device_name",
+          "type": "string",
+          "label": {
+            "en": "Device",
+            "fr": "Appareil"
+          }
+        },
+        {
+          "key": "alarm_title",
+          "type": "string",
+          "label": {
+            "en": "Alert",
+            "fr": "Alerte"
+          }
+        },
+        {
+          "key": "severity",
+          "type": "string",
+          "label": {
+            "en": "Severity",
+            "fr": "Gravité"
+          }
+        },
+        {
+          "key": "raised_at",
+          "type": "string",
+          "label": {
+            "en": "Seen at (ISO)",
+            "fr": "Vue à (ISO)"
+          }
+        }
+      ]
+    },
+    {
+      "key": "alert_raised",
+      "label": {
+        "en": "Flo: new alert",
+        "fr": "Flo : nouvelle alerte"
+      },
+      "description": {
+        "en": "Any new Flo alert, of the chosen severity and family.",
+        "fr": "Toute nouvelle alerte Flo, de la gravité et de la famille choisies."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "required": false,
+          "label": {
+            "en": "Device (empty: any)",
+            "fr": "Appareil (vide : n'importe lequel)"
+          }
+        },
+        {
+          "key": "severity",
+          "type": "select",
+          "required": false,
+          "label": {
+            "en": "Severity (empty: any)",
+            "fr": "Gravité (vide : n'importe laquelle)"
+          },
           "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
+            {
+              "value": "critical",
+              "label": {
+                "en": "Critical",
+                "fr": "Critique"
+              }
+            },
+            {
+              "value": "warning",
+              "label": {
+                "en": "Warning",
+                "fr": "Avertissement"
+              }
+            },
+            {
+              "value": "info",
+              "label": {
+                "en": "Information",
+                "fr": "Information"
+              }
+            }
+          ]
+        },
+        {
+          "key": "category",
+          "type": "select",
+          "required": false,
+          "label": {
+            "en": "Family (empty: any)",
+            "fr": "Famille (vide : n'importe laquelle)"
+          },
+          "options": [
+            {
+              "value": "leak",
+              "label": {
+                "en": "Leak",
+                "fr": "Fuite"
+              }
+            },
+            {
+              "value": "flow",
+              "label": {
+                "en": "Flow",
+                "fr": "Débit"
+              }
+            },
+            {
+              "value": "other",
+              "label": {
+                "en": "Other",
+                "fr": "Autre"
+              }
+            }
           ]
         }
       ],
       "variables": [
         {
-          "key": "target",
+          "key": "device_name",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
+          "label": {
+            "en": "Device",
+            "fr": "Appareil"
+          }
+        },
+        {
+          "key": "alarm_title",
+          "type": "string",
+          "label": {
+            "en": "Alert",
+            "fr": "Alerte"
+          }
+        },
+        {
+          "key": "alarm_name",
+          "type": "string",
+          "label": {
+            "en": "Alert code",
+            "fr": "Code de l'alerte"
+          }
+        },
+        {
+          "key": "alarm_id",
+          "type": "number",
+          "label": {
+            "en": "Alert id",
+            "fr": "Identifiant de l'alerte"
+          }
+        },
+        {
+          "key": "raised_at",
+          "type": "string",
+          "label": {
+            "en": "Seen at (ISO)",
+            "fr": "Vue à (ISO)"
+          }
         }
       ]
     }
   ],
   "scene_actions": [
     {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
+      "key": "set_mode",
+      "label": {
+        "en": "Flo: set Home or Away",
+        "fr": "Flo : passer en Maison ou Absent"
       },
-      "timeout_seconds": 15,
+      "description": {
+        "en": "Sets the Flo mode of the home of a device (every home when empty).",
+        "fr": "Règle le mode Flo du logement d'un appareil (tous les logements si vide)."
+      },
+      "timeout_seconds": 30,
+      "fields": [
+        {
+          "key": "mode",
+          "type": "select",
+          "required": true,
+          "label": {
+            "en": "Mode",
+            "fr": "Mode"
+          },
+          "options": [
+            {
+              "value": "home",
+              "label": {
+                "en": "Home",
+                "fr": "Maison"
+              }
+            },
+            {
+              "value": "away",
+              "label": {
+                "en": "Away",
+                "fr": "Absent"
+              }
+            }
+          ]
+        },
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "required": false,
+          "label": {
+            "en": "Device of the home (empty: every home)",
+            "fr": "Appareil du logement (vide : tous les logements)"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "key": "mode",
+          "type": "string",
+          "label": {
+            "en": "Mode",
+            "fr": "Mode"
+          }
+        },
+        {
+          "key": "locations",
+          "type": "number",
+          "label": {
+            "en": "Homes",
+            "fr": "Logements"
+          }
+        }
+      ]
+    },
+    {
+      "key": "set_valve",
+      "label": {
+        "en": "Flo: open or close the valve",
+        "fr": "Flo : ouvrir ou fermer la vanne"
+      },
+      "description": {
+        "en": "Needs the matching option in the configuration; the valve state is read again just before.",
+        "fr": "Demande l'option correspondante dans la configuration ; l'état de la vanne est relu juste avant."
+      },
+      "timeout_seconds": 30,
       "fields": [
         {
           "key": "device",
           "type": "select",
           "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
+          "required": true,
+          "label": {
+            "en": "Smart Water Shutoff",
+            "fr": "Vanne d'arrêt"
+          }
+        },
+        {
+          "key": "action",
+          "type": "select",
+          "required": true,
+          "label": {
+            "en": "Action",
+            "fr": "Action"
+          },
+          "options": [
+            {
+              "value": "close",
+              "label": {
+                "en": "Close (shut the water off)",
+                "fr": "Fermer (couper l'eau)"
+              }
+            },
+            {
+              "value": "open",
+              "label": {
+                "en": "Open",
+                "fr": "Ouvrir"
+              }
+            }
+          ]
         }
       ],
       "outputs": [
         {
-          "key": "signalled",
+          "key": "device_name",
+          "type": "string",
+          "label": {
+            "en": "Device",
+            "fr": "Appareil"
+          }
+        },
+        {
+          "key": "valve",
+          "type": "string",
+          "label": {
+            "en": "Valve (open or closed)",
+            "fr": "Vanne (open ou closed)"
+          }
+        },
+        {
+          "key": "changed",
           "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
+          "label": {
+            "en": "Command sent",
+            "fr": "Commande envoyée"
+          }
         }
       ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

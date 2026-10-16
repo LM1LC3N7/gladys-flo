@@ -11,6 +11,15 @@ Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
 its only runtime dependency. It started from the official JavaScript template.
 
+This repository: **Flo by Moen** (Smart Water Shutoff and Water Sensors)
+through the Flo cloud, the logic of aioflo (MIT, see THIRD_PARTY_NOTICES.md)
+ported to JavaScript. Decisions and open questions live in `TODO.md`.
+
+**Valve safety is not negotiable**: `allow_valve_open` and `allow_valve_close`
+stay off by default; a valve command is serialized per device, decided on the
+state read from Flo just before (never on the state in memory), and refused
+when that state is unknown, moving or offline. Keep the tests that prove it.
+
 ## Commands
 
 ```bash
@@ -31,16 +40,19 @@ pushing.
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
-src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
-gladys-assistant-integration.json manifest: name, config_schema, actions, image...
+index.js                          SDK wiring only (src/handlers.js registers before connect())
+src/handlers.js                   the SDK handlers -> FloApp (shared with the tests)
+src/app.js                        FloApp: refresh loop, states, badges, commands, scene actions
+src/flo/client.js                 Flo cloud client: sign-ins, token, calls, error kinds
+src/flo/model.js                  Flo answers -> readings (pure)
+src/devices.js                    readings -> Gladys devices and states (pure)
+src/triggers.js                   new alerts -> scene events (pure)
+src/http.js                       the only network access (fetch, timeout); setFetch() in tests
+src/config.js                     DEFAULTS (mirror the manifest) + normalization
+src/constants.js, src/i18n.js     endpoints, keys, timings; en/fr texts
+gladys-assistant-integration.json manifest: name, config_schema, actions, scene triggers/actions
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
+test/                             node --test, SDK fake Gladys + test/helpers/fakeFlo.js
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
 ```
 
@@ -73,4 +85,7 @@ test/                             node --test, against the SDK's fake Gladys (in
 - **User-facing text** is bilingual (English and French): action messages,
   manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+  in English. Tests never touch the network, and pass on Node 22 and 24.
+- **Encoding.** Text files are UTF-8 without BOM; `test/manifest.test.js`
+  refuses mojibake and a BOM. Write files with an editor, never with
+  PowerShell's `Set-Content`/`Out-File` defaults.

@@ -1,0 +1,34 @@
+{
+  "isConnected": true,
+  "fwVersion": "1.1.15",
+  "lastHeardFromTime": "2026-10-13T04:55:00Z",
+  "fwProperties": {
+    "telemetry_water": false,
+    "telemetry_battery_percent": 87
+  },
+  "id": "7a2d4c1b-sensor-0002",
+  "macAddress": "8cc7aa012345",
+  "nickname": "Water heater closet",
+  "isPaired": true,
+  "deviceModel": "puck_v1",
+  "deviceType": "puck_oem",
+  "battery": { "level": 87, "updated": "2026-10-13T04:55:00Z" },
+  "notifications": {
+    "pending": {
+      "infoCount": 0,
+      "warningCount": 0,
+      "criticalCount": 0,
+      "alarmCount": []
+    }
+  },
+  "serialNumber": "222222222222",
+  "connectivity": { "rssi": -61, "ssid": "SOMESSID" },
+  "telemetry": {
+    "current": {
+      "tempF": 64.4,
+      "humidity": 48.5,
+      "updated": "2026-10-13T04:55:00Z"
+    }
+  },
+  "location": { "id": "loc-home-1" }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "12345abcde",
+  "email": "email@address.com",
+  "isActive": true,
+  "firstName": "Tom",
+  "lastName": "Jones",
+  "unitSystem": "imperial_us",
+  "locale": "en-US",
+  "locations": [
+    {
+      "id": "loc-home-1",
+      "users": [{ "id": "12345abcde" }],
+      "devices": [
+        { "id": "5f1c0a9e-shutoff-0001", "macAddress": "111111111111" },
+        { "id": "7a2d4c1b-sensor-0002", "macAddress": "8cc7aa012345" },
+        { "id": "9b9b9b9b-bridge-0003", "macAddress": "8cc7aa0fffff" }
+      ],
+      "address": "123 Main Street",
+      "city": "Boston",
+      "state": "MA",
+      "country": "us",
+      "timezone": "America/New_York",
+      "nickname": "Home",
+      "systemMode": { "target": "home" },
+      "account": { "id": "aabbccdd" }
+    }
+  ],
+  "account": { "id": "aabbccdd" }
+}
