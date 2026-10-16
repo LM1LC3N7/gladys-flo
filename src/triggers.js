@@ -1,23 +1,38 @@
 // -----------------------------------------------------------------------------
-// Scene triggers (pure): the alerts that APPEARED between two readings of a
-// device. A trigger is one event per transition, never a repeated state:
+// Scene triggers (pure): the alerts that APPEARED since the last state seen
+// by a refresh. A trigger is one event per transition, never a repeated state:
 // - `alert_raised`: any new pending Flo alert (its count went up);
-// - `leak_detected`: a new leak alert (water detected, drip, failed health
-//   test) or a Water Sensor that starts reporting water — one per reading;
-// - `abnormal_flow`: a new flow alert (fast flow, long flow, high use).
-// The first reading of a device fires nothing: the alerts already pending at
-// start are not new.
+// - `leak_detected`: a new critical or warning alert of the leak family
+//   (water detected, drip, failed health test), or a Water Sensor that starts
+//   reporting water — one per device and refresh;
+// - `abnormal_flow`: a new critical or warning alert of the flow family.
+// The "seen" state (alert counts, water flag) is kept in /data across
+// restarts (src/store.js): an alert raised while the integration was down
+// fires at the first refresh. A device never seen before fires nothing (its
+// pending alerts are not new).
 // -----------------------------------------------------------------------------
 
 import { ALERT_CATEGORIES, SCENE_TRIGGERS } from './constants.js';
 import { describeAlarm } from './flo/model.js';
 
+/** The severities that may fire leak_detected / abnormal_flow. */
+export const TRIGGER_SEVERITIES = ['critical', 'warning'];
+
+/** What the triggers compare: `{ alarms: [{ id, count }], water }` (JSON, persisted). */
+export function seenOf(reading) {
+  return {
+    alarms: reading.alarms.map(({ id, count }) => ({ id, count })),
+    water: reading.water ?? null,
+  };
+}
+
 /**
  * The events of one device: [{ key, data }]. `target`: { externalId, name }.
- * `previous` / `current`: readings of src/flo/model.js.
+ * `seen`: the last seenOf() of it (undefined: never seen); `current`: its
+ * reading (src/flo/model.js).
  */
-export function alertEvents(target, previous, current, catalog, now) {
-  if (!previous || !current) {
+export function alertEvents(target, seen, current, catalog, now) {
+  if (!seen || !current) {
     return [];
   }
   const events = [];
@@ -36,7 +51,7 @@ export function alertEvents(target, previous, current, catalog, now) {
   let leak;
   let flow;
   for (const alarm of current.alarms) {
-    const before = previous.alarms.find((a) => a.id === alarm.id)?.count ?? 0;
+    const before = (seen.alarms ?? []).find((a) => a.id === alarm.id)?.count ?? 0;
     if (alarm.count <= before) {
       continue;
     }
@@ -45,17 +60,19 @@ export function alertEvents(target, previous, current, catalog, now) {
       alarm_id: a.id,
       alarm_name: a.name,
       alarm_title: a.title,
-      severity: a.severity,
+      severity: a.severity ?? null,
       category: a.category,
     });
     events.push({ key: SCENE_TRIGGERS.ALERT, data });
-    if (a.category === ALERT_CATEGORIES.LEAK) {
-      leak ??= data;
-    } else if (a.category === ALERT_CATEGORIES.FLOW) {
-      flow ??= data;
+    if (TRIGGER_SEVERITIES.includes(a.severity)) {
+      if (a.category === ALERT_CATEGORIES.LEAK) {
+        leak ??= data;
+      } else if (a.category === ALERT_CATEGORIES.FLOW) {
+        flow ??= data;
+      }
     }
   }
-  if (!leak && current.kind === 'sensor' && current.water === true && previous.water !== true) {
+  if (!leak && current.kind === 'sensor' && current.water === true && seen.water !== true) {
     leak = base({ severity: 'critical', category: ALERT_CATEGORIES.LEAK, source: 'sensor' });
   }
   if (leak) {

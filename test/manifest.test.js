@@ -18,7 +18,7 @@ import {
   SEVERITIES,
 } from '../src/constants.js';
 import { catalogOf, readingOf } from '../src/flo/model.js';
-import { alertEvents } from '../src/triggers.js';
+import { TRIGGER_SEVERITIES, alertEvents, seenOf } from '../src/triggers.js';
 import { NOW, fixture } from './helpers/fakeFlo.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -84,7 +84,7 @@ test('no mojibake (UTF-8 read as Latin-1) nor BOM in the text files', () => {
     'src/i18n.js',
   ]) {
     const text = read(path);
-    assert.ok(!text.startsWith('﻿'), `${path} starts with a BOM`);
+    assert.ok(!text.startsWith('\uFEFF'), `${path} starts with a BOM`);
     const match = mojibake.exec(text);
     assert.equal(match, null, `${path}: mojibake "${match?.[0]}" at ${match?.index}`);
   }
@@ -130,7 +130,7 @@ test('the configuration matches the code', () => {
     [fields.refresh_interval.min, fields.refresh_interval.max],
     [REFRESH_INTERVAL.min, REFRESH_INTERVAL.max],
   );
-  for (const key of ['allow_valve_open', 'allow_valve_close']) {
+  for (const key of ['allow_valve_open', 'allow_valve_close', 'allow_mode_change']) {
     assert.equal(fields[key].type, 'boolean');
     assert.equal(fields[key].default, false, `${key} is off by default (Louis's rule)`);
   }
@@ -169,6 +169,24 @@ test('the keys of the manifest are the keys of the code', () => {
   const options = (key) => alert.fields.find((f) => f.key === key).options.map((o) => o.value);
   assert.deepEqual(options('severity'), SEVERITIES);
   assert.deepEqual(options('category'), Object.values(ALERT_CATEGORIES));
+  // leak_detected and abnormal_flow fire for critical and warning alerts only.
+  for (const key of [SCENE_TRIGGERS.LEAK, SCENE_TRIGGERS.FLOW]) {
+    const trigger = manifest.scene_triggers.find((t) => t.key === key);
+    const severity = trigger.fields.find((f) => f.key === 'severity');
+    assert.deepEqual(
+      severity.options.map((o) => o.value),
+      TRIGGER_SEVERITIES,
+      key,
+    );
+  }
+});
+
+test('the password is not said to be encrypted (Gladys keeps secrets in clear in its database)', () => {
+  const password = manifest.config_schema.find((f) => f.key === 'password');
+  for (const lang of ['en', 'fr']) {
+    assert.doesNotMatch(password.description[lang], /encrypt|chiffr/i);
+    assert.doesNotMatch(read(`docs/${lang}.md`), /encrypt|chiffr/i);
+  }
 });
 
 test('every trigger field and variable is a key of the events the code fires', () => {
@@ -183,7 +201,7 @@ test('every trigger field and variable is a key of the events the code fires', (
   };
   const events = alertEvents(
     { externalId: 'ext:flo:flo:x', name: 'X' },
-    before,
+    seenOf(before),
     after,
     catalog,
     NOW,

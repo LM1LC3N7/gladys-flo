@@ -21,8 +21,8 @@
         "fr": "Votre compte Flo by Moen"
       },
       "description": {
-        "en": "Brings the Flo by Moen Smart Water Shutoff (flow, pressure, water temperature, today's use, valve, Home/Away mode, alerts) and the Flo Water Sensors (leak, temperature, humidity, battery) into Gladys, through the Flo cloud the Moen Smartwater app uses (US and Canada products). Enter the e-mail and password of your Flo or Moen account. Scene triggers fire on new leak and abnormal flow alerts. Opening and closing the valve stay off until you allow them below. Unofficial, not affiliated with Moen or Fortune Brands; never tested on a real device yet.",
-        "fr": "Amène dans Gladys la vanne d'arrêt Flo by Moen Smart Water Shutoff (débit, pression, température de l'eau, consommation du jour, vanne, mode Maison/Absent, alertes) et les détecteurs de fuite Flo Water Sensor (fuite, température, humidité, batterie), par le cloud Flo qu'utilise l'application Moen Smartwater (produits des États-Unis et du Canada). Saisissez l'e-mail et le mot de passe de votre compte Flo ou Moen. Des déclencheurs de scène réagissent aux nouvelles alertes de fuite et de débit anormal. L'ouverture et la fermeture de la vanne restent désactivées tant que vous ne les autorisez pas ci-dessous. Non officiel, sans lien avec Moen ni Fortune Brands ; jamais testé sur un vrai appareil."
+        "en": "Brings the Flo by Moen Smart Water Shutoff (flow, pressure, water temperature, today's use, valve, Home/Away mode, alerts) and the Flo Water Sensors (leak, temperature, humidity, battery) into Gladys, through the Flo cloud the Moen Smartwater app uses (US and Canada products). Enter the e-mail and password of your Flo or Moen account. Scene triggers fire on new leak and abnormal flow alerts. Opening or closing the valve and changing the mode stay off until you allow them below. Unofficial, not affiliated with Moen or Fortune Brands; never tested on a real device yet.",
+        "fr": "Amène dans Gladys la vanne d'arrêt Flo by Moen Smart Water Shutoff (débit, pression, température de l'eau, consommation du jour, vanne, mode Maison/Absent, alertes) et les détecteurs de fuite Flo Water Sensor (fuite, température, humidité, batterie), par le cloud Flo qu'utilise l'application Moen Smartwater (produits des États-Unis et du Canada). Saisissez l'e-mail et le mot de passe de votre compte Flo ou Moen. Des déclencheurs de scène réagissent aux nouvelles alertes de fuite et de débit anormal. L'ouverture, la fermeture de la vanne et le changement de mode restent désactivés tant que vous ne les autorisez pas ci-dessous. Non officiel, sans lien avec Moen ni Fortune Brands ; jamais testé sur un vrai appareil."
       },
       "links": [
         {
@@ -62,8 +62,8 @@
         "fr": "Mot de passe"
       },
       "description": {
-        "en": "Stored encrypted by Gladys, sent only to the Flo and Moen sign-in endpoints (HTTPS).",
-        "fr": "Stocké chiffré par Gladys, envoyé uniquement aux points de connexion Flo et Moen (HTTPS)."
+        "en": "Kept by Gladys in its database, never shown again, sent only to Flo/Moen (HTTPS).",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à Flo/Moen (HTTPS)."
       },
       "required": true
     },
@@ -91,6 +91,20 @@
       "description": {
         "en": "Off by default: reopening the water after a leak should be done on site.",
         "fr": "Désactivé par défaut : rouvrir l'eau après une fuite devrait se faire sur place."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "allow_mode_change",
+      "type": "boolean",
+      "label": {
+        "en": "Allow changing the Home/Away mode from Gladys",
+        "fr": "Autoriser le changement de mode Maison/Absent depuis Gladys"
+      },
+      "description": {
+        "en": "Off by default. Warning: Home disarms the automatic shutoff Flo applies in Away.",
+        "fr": "Désactivé par défaut. Attention : Maison désarme la coupure automatique que Flo applique en Absent."
       },
       "required": false,
       "default": false
@@ -201,8 +215,8 @@
         "fr": "Flo : fuite détectée"
       },
       "description": {
-        "en": "A Water Sensor detects water, or Flo raises a new leak alert (drip, failed health test).",
-        "fr": "Un détecteur Water Sensor détecte de l'eau, ou Flo lève une nouvelle alerte de fuite (goutte à goutte, test d'étanchéité échoué)."
+        "en": "A Water Sensor detects water, or Flo raises a new critical or warning leak alert (water detected, drip, failed health test).",
+        "fr": "Un détecteur Water Sensor détecte de l’eau, ou Flo lève une nouvelle alerte de fuite critique ou d’avertissement (eau détectée, goutte à goutte, test d’étanchéité échoué)."
       },
       "fields": [
         {
@@ -214,6 +228,31 @@
             "en": "Device (empty: any)",
             "fr": "Appareil (vide : n'importe lequel)"
           }
+        },
+        {
+          "key": "severity",
+          "type": "select",
+          "required": false,
+          "label": {
+            "en": "Severity (empty: critical or warning)",
+            "fr": "Gravité (vide : critique ou avertissement)"
+          },
+          "options": [
+            {
+              "value": "critical",
+              "label": {
+                "en": "Critical",
+                "fr": "Critique"
+              }
+            },
+            {
+              "value": "warning",
+              "label": {
+                "en": "Warning",
+                "fr": "Avertissement"
+              }
+            }
+          ]
         }
       ],
       "variables": [
@@ -266,8 +305,8 @@
         "fr": "Flo : débit anormal"
       },
       "description": {
-        "en": "Flo raises a new flow alert: fast water flow, long flow, high water use.",
-        "fr": "Flo lève une nouvelle alerte de débit : débit rapide, écoulement prolongé, forte consommation."
+        "en": "Flo raises a new critical or warning flow alert: fast water flow, long flow, high water use.",
+        "fr": "Flo lève une nouvelle alerte de débit critique ou d’avertissement : débit rapide, écoulement prolongé, forte consommation."
       },
       "fields": [
         {
@@ -279,6 +318,31 @@
             "en": "Device (empty: any)",
             "fr": "Appareil (vide : n'importe lequel)"
           }
+        },
+        {
+          "key": "severity",
+          "type": "select",
+          "required": false,
+          "label": {
+            "en": "Severity (empty: critical or warning)",
+            "fr": "Gravité (vide : critique ou avertissement)"
+          },
+          "options": [
+            {
+              "value": "critical",
+              "label": {
+                "en": "Critical",
+                "fr": "Critique"
+              }
+            },
+            {
+              "value": "warning",
+              "label": {
+                "en": "Warning",
+                "fr": "Avertissement"
+              }
+            }
+          ]
         }
       ],
       "variables": [

@@ -73,6 +73,8 @@ up to date at the end of every milestone.
   a passing failure (network, 5xx, 429, CloudFront) never switches. Both
   refused -> "refused", never retried by itself (test button or a change of
   configuration). The flow that worked is tried first next time.
+- **Valve as a switch**: once an option is on, the valve is reachable by voice
+  assistants and "turn everything off"; written in the docs (review).
 - **Token**: memory only; renewed 5 min before expiry (aioflo: 60 s); a token
   refused by the API is renewed once and the call retried once — refused
   again, the refresh fails with a backoff (1, 2, 5, 10, 15 min), no loop. A
@@ -92,7 +94,7 @@ up to date at the end of every milestone.
   (`isConnected` not true), the valve is not `open`/`closed`, or its target
   differs from its last known position (moving); nothing sent when already
   in place; read back at 15 s and 60 s. The state in memory never decides.
-- **Mode**: Home/Away allowed (brief), serialized per location, on a fresh
+- **Mode**: Home/Away behind `allow_mode_change` (below), serialized per location, on a fresh
   read; sleep refused (needs a duration, set in the Moen app); a locked mode
   (`systemMode.isLocked`) refused. Exposed as an "away" switch (1 away, 0
   home or sleep) plus a read-only text feature (home/away/sleep): the
@@ -104,13 +106,54 @@ up to date at the end of every milestone.
   use `volume-sensor/decimal` in litres, sensor temperature °C, humidity %,
   battery %. Valve and away are `switch/binary` (1 open / 1 away; the
   water-valve category has no binary type).
-- **Alert binary** on the shutoff (`leak-sensor/binary`, "Leak or flow
-  alert"): 1 while a leak/flow alert (by catalog name) or any critical alert
-  is pending.
-- **Scene triggers**: one event per alert whose pending count goes up; none
-  for the alerts pending at the first reading; at most one `leak_detected`
-  per device and reading (a Water Sensor reports both its water flag and an
-  alarm). The 9 keys of the event data are the same for the three triggers.
+- **Alert features of the shutoff (review, fixed now: types are frozen at
+  creation)**: `leak_alert` (`leak-sensor/binary`, "Leak alert") is 1 while
+  an alert of the leak family is pending — flow alerts no longer turn it on;
+  when the catalog does not know an alert (catalog unavailable or a new id), a
+  critical one turns it on, by caution. `alerts` (`text/text`, "Pending
+  alerts") lists every pending alert ("Title (severity)", or "none").
+- **Alert families**: an explicit list of known names (`KNOWN_ALARMS` in
+  src/flo/model.js: water_detected, small_drip[_category_1–4],
+  health_test_failed; fast_water_flow, high_flow_rate, high_water_usage,
+  high_water_use, extended_water_use, long_flow_event), exact match, no
+  pattern; any other name is "other". Severity: the alert's (case
+  normalized), else the catalog's, else none (unknown values dropped).
+- **Scene triggers**: computed by the refresh only (never in a command chain:
+  a command's read does not mark an alert seen), one event per alert whose
+  pending count goes up; `leak_detected` and `abnormal_flow` for critical or
+  warning alerts only (a `severity` filter field), `alert_raised` for all; at
+  most one `leak_detected` per device and refresh. The 9 keys of the event
+  data are the same for the three triggers.
+- **Seen state in /data** (`flo-seen.json`: alert counts and water flag per
+  device, no secret; temporary file then rename): an alert raised while the
+  integration restarts fires at the next start; a device absent from the file
+  is a baseline (fires nothing). Write failures are logged, not fatal. The
+  docs recommend a "device state" trigger on `leak` / `leak_alert` to shut
+  the water off, which does not depend on events.
+- **Readings numbered** at the start of their request: an older answer
+  (a refresh's read overtaken by a command's read) never overwrites a newer
+  one; the triggers use the newest reading.
+- **Command deadline**: set_value is acked within 5 s, so a valve or mode
+  command not sent within 3.5 s of its arrival is refused ("waited too
+  long"), never sent late; 25 s for the scene actions (timeout 30 s). The
+  command's requests get short timeouts (what is left of the deadline,
+  0.5–10 s; +1 s for the POST). States and badges are published after the
+  POST (or the refusal); a failed POST is read back too (it may have reached
+  the valve); a valve already moving to the target is `changed: false`.
+- **`allow_mode_change`, off by default — PROVISIONAL, pending Louis's
+  decision** (review 2026-10-16): the brief allowed Home/Away, but Home
+  disarms the automatic shutoff Flo applies in Away; the switch and the
+  `set_mode` scene action are refused until the user turns it on (warning in
+  the docs).
+- **Auto sign-in**: once Flo refused the credentials, only Moen is tried until
+  the configuration changes. A 403 with `x-amzn-errortype` (AWS API Gateway)
+  is `not_found` (MissingAuthenticationToken) or passing, never "refused".
+  Token renewed min(5 min, half its lifetime) before expiry.
+- **A 401/403 on one device** (after the token renewal) skips that device for
+  the refresh, like a 404.
+- **Password**: kept by Gladys in its database in clear (a `secret` field is
+  only hidden in the interface, and is in the backups); the docs and the
+  manifest say so, no "encrypted" claim.
 - **Pace**: account + every device every 2 min by default (1–60; Home
   Assistant: 1 min), consumption every 15 min per shutoff, alarm catalog once
   a day (an hour later after a failure). States through

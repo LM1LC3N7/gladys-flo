@@ -37,18 +37,24 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (FloApp) ⇄ src/flo/client.js
   CloudFront 403 is a passing error, not a refusal.
 - **Devices**: `ext:<selector>:flo:<deviceId>`, the Flo device id. Shutoff
   (`flo_device_v2`): valve and away switches, mode text, flow (m³/h), pressure
-  (psi), water temperature (°C, probe), today's use (L), leak or flow alert.
-  Water Sensor (`puck_oem`): leak, temperature, humidity, battery. Others are
-  skipped.
+  (psi), water temperature (°C, probe), today's use (L), leak alert (leak
+  family only), pending alerts (text). Water Sensor (`puck_oem`): leak,
+  temperature, humidity, battery. Others are skipped. Readings are numbered:
+  an older answer never overwrites a newer one.
 - **Valve**: `POST devices/{id}` `{ valve: { target } }` behind
   `allow_valve_open` / `allow_valve_close` (both off), one command at a time
   per device, the device read again just before (refused when offline,
-  moving, unknown or unreadable), read back 15 s and 60 s later.
-- **Mode**: `POST locations/{id}/systemMode` `{ target: home|away }`; sleep
+  moving the other way, unknown or unreadable), refused if not sent within
+  3.5 s of a set_value (25 s for a scene action), read back 15 s and 60 s
+  later (after a failure too).
+- **Mode**: `POST locations/{id}/systemMode` `{ target: home|away }` behind
+  `allow_mode_change` (off: Home disarms Flo's automatic shutoff); sleep
   needs a duration and is refused; a locked mode is refused.
-- **Scene triggers**: `leak_detected`, `abnormal_flow`, `alert_raised`, on an
-  alert whose pending count goes up (and a Water Sensor starting to report
-  water); never on the alerts already pending at start.
+- **Scene triggers**: `leak_detected`, `abnormal_flow` (critical or warning,
+  known alarm names) and `alert_raised`, at the refresh that sees an alert's
+  pending count go up (or a Water Sensor start reporting water). What was
+  seen is kept in `/data/flo-seen.json`, so alerts raised during a restart
+  fire at the next start.
 
 ## Development
 

@@ -5,6 +5,9 @@
 
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DEVICE_TRANSPORTS } from '@gladysassistant/integration-sdk';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { FloApp } from '../src/app.js';
@@ -29,11 +32,31 @@ const CONFIG = { email: EMAIL, password: PASSWORD };
 const dev = (id) => `ext:flo:flo:${id}`;
 
 let fake;
-afterEach(() => fake?.restore());
+const dirs = [];
+afterEach(() => {
+  fake?.restore();
+  for (const dir of dirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
-async function setup({ config = CONFIG, create = true, before } = {}) {
-  const clock = { now: NOW };
-  fake = installFlo(clock);
+/** A new empty directory standing for /data. */
+const dataDir = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gladys-flo-'));
+  dirs.push(dir);
+  return dir;
+};
+
+async function setup({
+  config = CONFIG,
+  create = true,
+  before,
+  data = dataDir(),
+  installed,
+  now = NOW,
+} = {}) {
+  const clock = { now };
+  fake = installed ?? installFlo(clock);
   before?.(fake);
   const gladys = createFakeGladys({ selector: 'flo', config });
   const timers = createFakeTimers();
@@ -42,7 +65,7 @@ async function setup({ config = CONFIG, create = true, before } = {}) {
   for (const level of ['debug', 'info', 'warn', 'error']) {
     logger[level] = (...args) => lines.push(`${level}: ${args.map(String).join(' ')}`);
   }
-  const app = new FloApp({ gladys, logger, now: () => clock.now, timers });
+  const app = new FloApp({ gladys, logger, now: () => clock.now, timers, dataDir: data });
   registerHandlers(gladys, app, logger);
   await gladys.connect();
   await app.running;
@@ -59,7 +82,7 @@ async function setup({ config = CONFIG, create = true, before } = {}) {
       await app.running;
     }
   };
-  return { gladys, app, timers, clock, lines, advance };
+  return { gladys, app, timers, clock, lines, advance, data };
 }
 
 const deviceOf = (gladys, id) =>
@@ -150,7 +173,8 @@ test('the Gladys devices and their features', async () => {
     'pressure',
     'water_temperature',
     'consumption_today',
-    'alert',
+    'leak_alert',
+    'alerts',
   ]);
   assert.deepEqual(roles(SENSOR), ['leak', 'temperature', 'humidity', 'battery']);
   const shutoff = deviceOf(gladys, SHUTOFF);
@@ -180,7 +204,8 @@ test('states reach Gladys once the devices are created, in Gladys units', async 
   assert.equal(last(gladys, SHUTOFF, 'water_temperature'), 21.1);
   // 3.674 gallons -> 13.9 litres
   assert.equal(last(gladys, SHUTOFF, 'consumption_today'), 13.9);
-  assert.equal(last(gladys, SHUTOFF, 'alert'), 0);
+  assert.equal(last(gladys, SHUTOFF, 'leak_alert'), 0);
+  assert.equal(lastText(gladys, SHUTOFF, 'alerts'), 'aucune');
   assert.equal(last(gladys, SENSOR, 'leak'), 0);
   assert.equal(last(gladys, SENSOR, 'temperature'), 18);
   assert.equal(last(gladys, SENSOR, 'humidity'), 48.5);
@@ -285,7 +310,21 @@ test('refused credentials: status, no retry by itself, the test button retries',
   assert.equal(app.refused, true);
   const answer = await action(gladys, ACTIONS.TEST_CONNECTION);
   assert.match(answer.en, /refused/);
-  assert.equal(fake.calls.length, 4, 'one more sign-in per click (Flo, then Moen)');
+  // Flo refused these credentials: only Moen until the configuration changes.
+  assert.equal(fake.calls.length, 3, 'one more sign-in per click');
+  assert.match(fake.calls.at(-1).path, /oauth2\/token$/);
+  await gladys.fake.configUpdated(CONFIG);
+  assert.match(fake.calls[3].path, /users\/auth$/, 'new credentials: Flo again');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('a 401/403 on one device skips it, the others go on', async () => {
+  const { gladys, app, advance } = await setup();
+  fake.route('GET', new RegExp(`devices/${SENSOR}$`), () => json({ message: 'no' }, 403));
+  await advance(2);
+  assert.equal(app.devices.has(SENSOR), false);
+  assert.equal(app.devices.has(SHUTOFF), true);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
 });
 
 test('a token refused by the API is renewed once, then the call retried', async () => {
@@ -409,7 +448,7 @@ test('the valve is refused when its state is unknown, moving, offline or unreada
   const { gladys } = await setup();
   await allow(gladys, { allow_valve_close: true });
   const cases = [
-    (d) => (d.valve = { target: 'closed', lastKnown: 'open' }), // moving
+    (d) => (d.valve = { target: 'open', lastKnown: 'closed' }), // moving the other way
     (d) => (d.valve = { lastKnown: 'unknown' }),
     (d) => (d.valve = { target: 'open', lastKnown: 'broken' }),
     (d) => (d.isConnected = false),
@@ -463,13 +502,114 @@ test('valve commands of one device run one at a time, each on a fresh read', asy
 test('a Water Sensor has no valve', async () => {
   const { gladys, app } = await setup();
   await allow(gladys, { allow_valve_close: true });
-  await assert.rejects(app.setValve(SENSOR, false), /has no valve/);
+  await assert.rejects(app.setValve(SENSOR, false), /n'a pas de vanne/);
+});
+
+test('a valve already moving to the target: nothing sent, no error', async () => {
+  const { gladys, app } = await setup();
+  await allow(gladys, { allow_valve_close: true });
+  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'open' };
+  const result = await app.setValve(SHUTOFF, false);
+  assert.equal(result.changed, false);
+  assert.equal(result.valve, 'closed');
+  assert.equal(fake.made(/^POST .*devices/).length, 0);
+});
+
+test('a failed valve command is read back all the same', async () => {
+  const { gladys, timers } = await setup();
+  await allow(gladys, { allow_valve_close: true });
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 503));
+  await assert.rejects(app_set(gladys, 0), /unavailable/);
+  assert.equal(timers.timeouts().length, 2, 'read back at 15 s and 60 s');
+  // The known state is published again (Gladys showed the value asked for).
+  assert.equal(last(gladys, SHUTOFF, 'valve'), 1);
+});
+
+test('a command not sent within 3.5 s of its arrival is refused, never sent late', async () => {
+  const { gladys, clock, app } = await setup();
+  await allow(gladys, { allow_valve_close: true, allow_mode_change: true });
+  // The read just before acting takes 4 s.
+  fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), () => {
+    clock.now += 4_000;
+    return PASS;
+  });
+  await assert.rejects(app_set(gladys, 0), /attendu trop longtemps/);
+  await assert.rejects(set(gladys, SHUTOFF, 'away', 1), /attendu trop longtemps/);
+  assert.equal(fake.made(/^POST api-gw/).length, 0);
+  // A scene action has 25 s: 4 s is fine.
+  await app.setValve(SHUTOFF, false);
+  assert.equal(fake.made(/^POST .*devices/).length, 1);
+  // The request of a command has a short timeout.
+  const post = fake.made(/^POST .*devices/)[0];
+  assert.ok(post, 'sent');
+});
+
+test('the request timeouts of a command follow its deadline', async () => {
+  const { gladys, app, clock } = await setup();
+  await allow(gladys, { allow_valve_close: true });
+  const options = app.commandOptions(clock.now + 3_500);
+  assert.equal(options.read.timeout(), 3_500);
+  assert.equal(options.post.timeout(), 4_500);
+  clock.now += 3_400;
+  assert.equal(options.read.timeout(), 500, 'never below 500 ms');
+  clock.now += 200;
+  assert.throws(() => options.post.guard(), /attendu trop longtemps/);
+});
+
+test('an older answer never overwrites a newer one; no duplicate trigger', async () => {
+  const { gladys, app, clock } = await setup();
+  const device = fake.state.devices[SHUTOFF];
+  let release;
+  let blocked = false;
+  fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), async () => {
+    if (blocked) {
+      return PASS;
+    }
+    blocked = true;
+    // The refresh's read: answered with the state of now, delivered later.
+    const old = structuredClone(device);
+    await new Promise((resolve) => (release = resolve));
+    return old;
+  });
+  clock.now += 2 * MINUTE;
+  const refresh = app.refresh();
+  while (!release) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // Meanwhile the valve closed and a leak alert appeared; a command reads it.
+  device.valve = { target: 'closed', lastKnown: 'closed' };
+  device.notifications.pending.alarmCount = [{ id: 28, severity: 'warning', count: 1 }];
+  await app.read(SHUTOFF);
+  assert.deepEqual(events(gladys), [], 'no scene event outside the refresh');
+  release();
+  await refresh;
+  assert.equal(app.devices.get(SHUTOFF).valve, 'closed', 'the older answer is ignored');
+  assert.equal(last(gladys, SHUTOFF, 'valve'), 0);
+  assert.deepEqual(
+    events(gladys).map((e) => e.key),
+    [SCENE_TRIGGERS.ALERT, SCENE_TRIGGERS.LEAK],
+  );
+  clock.now += 2 * MINUTE;
+  await app.refresh();
+  assert.equal(events(gladys).length, 2, 'fired once');
 });
 
 // --- Mode -----------------------------------------------------------------------------
 
+test('Home/Away is refused by default (Home disarms the automatic shutoff)', async () => {
+  const { gladys } = await setup();
+  await assert.rejects(set(gladys, SHUTOFF, 'away', 1), /changement de mode Flo/);
+  await assert.rejects(
+    sceneAction(gladys, SCENE_ACTIONS.SET_MODE, { mode: 'away' }),
+    /changement de mode Flo/,
+  );
+  assert.equal(fake.made(/systemMode/).length, 0);
+  assert.equal(last(gladys, SHUTOFF, 'away'), 0, 'the known state sent again');
+});
+
 test('Away and Home from the switch, on the location, read back', async () => {
   const { gladys, timers } = await setup();
+  await allow(gladys, { allow_mode_change: true });
   await set(gladys, SHUTOFF, 'away', 1);
   const [call] = fake.made(/systemMode/);
   assert.equal(call.path, `api-gw.meetflo.com/api/v2/locations/${LOCATION}/systemMode`);
@@ -483,6 +623,7 @@ test('Away and Home from the switch, on the location, read back', async () => {
 
 test('a mode locked by Flo is refused; sleep is shown, not set', async () => {
   const { gladys, app, advance } = await setup();
+  await allow(gladys, { allow_mode_change: true });
   fake.state.devices[SHUTOFF].systemMode = { isLocked: true, lastKnown: 'home', target: 'home' };
   await assert.rejects(app.setMode(SHUTOFF, 'away'), /verrouillé le mode/);
   await assert.rejects(app.setMode(SHUTOFF, 'sleep'), /mode veille demande une durée/);
@@ -497,6 +638,7 @@ test('a mode locked by Flo is refused; sleep is shown, not set', async () => {
 
 test('scene action set_mode: every home, or the home of a device', async () => {
   const { gladys } = await setup();
+  await allow(gladys, { allow_mode_change: true });
   const out = await sceneAction(gladys, SCENE_ACTIONS.SET_MODE, { mode: 'away' });
   assert.deepEqual(out, { mode: 'away', locations: 1 });
   assert.deepEqual(fake.made(/systemMode/).at(-1).body, { target: 'away' });
@@ -545,7 +687,12 @@ test('new alerts fire scene triggers once; pending ones at start do not', async 
   assert.equal(fired[1].data.device, dev(SHUTOFF));
   assert.equal(fired[1].data.alarm_title, 'Fast Water Flow');
   assert.equal(fired[1].data.severity, 'critical');
-  assert.equal(last(gladys, SHUTOFF, 'alert'), 1);
+  // A flow alert is not a leak: the leak binary stays 0, the text lists it.
+  assert.equal(last(gladys, SHUTOFF, 'leak_alert'), 0);
+  assert.equal(
+    lastText(gladys, SHUTOFF, 'alerts'),
+    'Health Test Skipped (info), Fast Water Flow (critical)',
+  );
   await advance(2);
   assert.equal(events(gladys).length, 2, 'still pending: not new');
   // A drip: a leak.
@@ -561,10 +708,52 @@ test('new alerts fire scene triggers once; pending ones at start do not', async 
       .map((e) => e.key),
     [SCENE_TRIGGERS.ALERT, SCENE_TRIGGERS.LEAK],
   );
-  // Cleared alerts: the alert binary goes back to 0.
+  assert.equal(last(gladys, SHUTOFF, 'leak_alert'), 1);
+  // Cleared alerts: the leak binary goes back to 0.
   fake.state.devices[SHUTOFF].notifications.pending.alarmCount = [];
   await advance(2);
-  assert.equal(last(gladys, SHUTOFF, 'alert'), 0);
+  assert.equal(last(gladys, SHUTOFF, 'leak_alert'), 0);
+  assert.equal(lastText(gladys, SHUTOFF, 'alerts'), 'aucune');
+});
+
+test('an info leak alert fires alert_raised only; an unknown alert without catalog', async () => {
+  const { gladys, advance } = await setup({
+    before: (f) => f.route('GET', /\/alarms$/, () => json({}, 503)),
+  });
+  fake.state.devices[SHUTOFF].notifications.pending.alarmCount = [
+    { id: 77, severity: 'Critical', count: 1 },
+  ];
+  await advance(2);
+  const fired = events(gladys);
+  assert.deepEqual(
+    fired.map((e) => e.key),
+    [SCENE_TRIGGERS.ALERT],
+  );
+  assert.equal(fired[0].data.severity, 'critical');
+  assert.equal(fired[0].data.category, 'other');
+  // Catalog unavailable: an unknown critical alert lights the leak binary, by caution.
+  assert.equal(last(gladys, SHUTOFF, 'leak_alert'), 1);
+});
+
+test('an alert raised while the integration was down fires at the next start', async () => {
+  const clock = { now: NOW };
+  const installed = installFlo(clock);
+  const data = dataDir();
+  const first = await setup({ installed, data });
+  first.app.stop();
+  const saved = JSON.parse(readFileSync(join(data, 'flo-seen.json'), 'utf8'));
+  assert.deepEqual(saved.devices[SENSOR], { alarms: [], water: false });
+  // Down: the Water Sensor detects water.
+  installed.state.devices[SENSOR].fwProperties.telemetry_water = true;
+  const second = await setup({ installed, data });
+  const leaks = events(second.gladys).filter((e) => e.key === SCENE_TRIGGERS.LEAK);
+  assert.equal(leaks.length, 1);
+  assert.equal(leaks[0].data.source, 'sensor');
+  // Without the saved state, nothing fires (not new for all we know).
+  const third = await setup({ installed, data: dataDir() });
+  assert.deepEqual(events(third.gladys), []);
+  second.app.stop();
+  third.app.stop();
 });
 
 test('a Water Sensor detecting water fires one leak trigger', async () => {

@@ -8,7 +8,13 @@
 // until the user allows each of them; the commands of one device run one at
 // a time; the device is read again just before acting, and the command is
 // refused when that read fails or the valve is offline, moving or unknown.
-// A state kept in memory never decides a valve command.
+// A state kept in memory never decides a valve command. A command that could
+// not be sent while Gladys still waits for its answer is refused, never sent
+// late.
+//
+// Readings are numbered when their request starts: an older answer arriving
+// after a newer one is ignored. Scene triggers are computed by the refresh
+// only, against what it saw last (kept in /data, src/store.js).
 // -----------------------------------------------------------------------------
 
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
@@ -25,14 +31,19 @@ import {
   valveAtRest,
 } from './flo/model.js';
 import { T, age, word } from './i18n.js';
-import { alertEvents } from './triggers.js';
+import { loadSeen, saveSeen } from './store.js';
+import { alertEvents, seenOf } from './triggers.js';
 
 /** Errors after which only a change of the configuration (or the test button) helps. */
 const REFUSED = new Set(['refused', 'no_credentials']);
 /** Errors meaning Flo did not answer usefully: the devices are unreachable. */
 const OFFLINE = new Set(['network', 'timeout', 'unavailable', 'bad_response', 'http']);
+/** Errors of one device during a refresh: that device is skipped, the others go on. */
+const DEVICE_SKIPPED = new Set(['not_found', 'unauthorized']);
 
 const defaultTimers = { setTimeout, clearTimeout, setInterval, clearInterval };
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export class FloApp {
   constructor({
@@ -41,12 +52,14 @@ export class FloApp {
     now = Date.now,
     timers = defaultTimers,
     client,
+    dataDir = '/data',
   }) {
     this.gladys = gladys;
     this.logger = logger;
     this.now = now;
     this.timers = timers;
     this.client = client ?? new FloClient({ now });
+    this.dataDir = dataDir;
     this.config = normalizeConfig();
     this.generation = 0;
     this.tickTimer = undefined;
@@ -54,6 +67,8 @@ export class FloApp {
     this.started = false;
     this.lastStatus = undefined;
     this.lastTestAt = -Infinity;
+    /** Number of the last device read started (never reset: readings stay ordered). */
+    this.readSeq = 0;
     /** key -> tail of its command chain: one valve / mode command at a time. */
     this.chains = new Map();
     this.readBackTimers = new Set();
@@ -62,8 +77,11 @@ export class FloApp {
 
   /** Forgets the account and the failures: new credentials, or a restart. */
   reset() {
-    /** Flo device id -> last reading (supported devices only) */
+    /** Flo device id -> last reading (supported devices only), with its `seq` */
     this.devices = new Map();
+    /** Flo device id -> what the triggers saw last (src/triggers.js seenOf) */
+    this.seen = new Map();
+    this.seenSaved = undefined;
     /** Flo location id -> location of src/flo/model.js */
     this.locations = new Map();
     /** Flo device id -> location id, from the account */
@@ -91,6 +109,8 @@ export class FloApp {
     await this.running;
     this.config = normalizeConfig(raw);
     this.reset();
+    this.seen = await loadSeen(this.dataDir);
+    this.seenSaved = JSON.stringify([...this.seen]);
     this.client.configure({
       email: this.config.email,
       password: this.config.password,
@@ -156,6 +176,7 @@ export class FloApp {
     }
     if (next.language !== previous.language) {
       await this.publishDevices();
+      await this.publishStates();
     }
   }
 
@@ -194,13 +215,13 @@ export class FloApp {
     if (!this.client.hasCredentials || this.refused) {
       return;
     }
-    // The new alerts already read are fired even if a later read fails:
-    // their reading is kept, they would not be "new" at the next refresh.
+    // The new alerts already found are fired even if a later read fails:
+    // they are marked seen, they would not be "new" at the next refresh.
     const events = [];
     try {
       const locations = locationsOf(await this.client.account());
       await this.readCatalog();
-      const seen = new Set();
+      const kept = new Set();
       const skipped = [];
       for (const location of locations) {
         for (const { id } of location.devices) {
@@ -210,25 +231,25 @@ export class FloApp {
           this.locationOf.set(id, location.id);
           let reading;
           try {
-            reading = readingOf(await this.client.device(id));
+            reading = await this.read(id);
           } catch (err) {
-            if (err.kind !== 'not_found') {
+            if (!DEVICE_SKIPPED.has(err.kind)) {
               throw err;
             }
-            this.logger.info(`Flo device ${id} not found: skipped`);
+            this.logger.info(`Flo device ${id} skipped (${err.message})`);
             continue;
           }
-          reading.id ||= id;
-          reading.locationId ??= location.id;
           if (reading.kind === 'other') {
             skipped.push({ id, type: reading.type });
             continue;
           }
-          seen.add(reading.id);
-          if (reading.kind === 'shutoff') {
-            await this.readConsumption(reading, location);
+          kept.add(id);
+          // The newest reading (a command may have read the device meanwhile).
+          const current = this.devices.get(id) ?? reading;
+          events.push(...this.newEvents(current));
+          if (current.kind === 'shutoff') {
+            await this.readConsumption(current, location);
           }
-          events.push(...this.update(reading));
         }
       }
       if (generation !== this.generation) {
@@ -236,9 +257,10 @@ export class FloApp {
       }
       this.locations = new Map(locations.map((l) => [l.id, l]));
       for (const id of [...this.devices.keys()]) {
-        if (!seen.has(id)) {
+        if (!kept.has(id)) {
           this.devices.delete(id);
           this.gallons.delete(id);
+          this.seen.delete(id);
         }
       }
       this.skipped = skipped;
@@ -254,9 +276,68 @@ export class FloApp {
         return;
       }
       await this.failed(err);
+    } finally {
+      await this.saveSeen();
     }
     await this.publishEvents(events);
     await this.publishTransports();
+  }
+
+  /**
+   * Reads one device from Flo and keeps the reading unless a newer one (a
+   * read started later) is already kept. Resolves the reading of this read.
+   */
+  async read(id, options) {
+    const seq = ++this.readSeq;
+    const reading = readingOf(await this.client.device(id, options));
+    reading.id ||= String(id);
+    reading.locationId ??= this.locationOf.get(reading.id);
+    reading.seq = seq;
+    this.update(reading);
+    return reading;
+  }
+
+  /** Keeps a reading, unless it is older than the one in memory. */
+  update(reading) {
+    if (reading.kind === 'other') {
+      return;
+    }
+    const previous = this.devices.get(reading.id);
+    if (previous && previous.seq > reading.seq) {
+      this.logger.debug?.(`Flo device ${reading.id}: older answer ignored`);
+      return;
+    }
+    this.devices.set(reading.id, reading);
+  }
+
+  /** The scene events of a device since the last refresh; marks its state seen. */
+  newEvents(reading) {
+    const target = {
+      externalId: deviceIds(this.gladys, reading.id).device,
+      name: deviceName(reading, this.config.language),
+    };
+    const events = alertEvents(
+      target,
+      this.seen.get(reading.id),
+      reading,
+      this.catalog,
+      this.now(),
+    );
+    this.seen.set(reading.id, seenOf(reading));
+    return events;
+  }
+
+  async saveSeen() {
+    const json = JSON.stringify([...this.seen]);
+    if (json === this.seenSaved) {
+      return;
+    }
+    try {
+      await saveSeen(this.dataDir, this.seen);
+      this.seenSaved = json;
+    } catch (err) {
+      this.logger.warn(`Saving the alert state to ${this.dataDir} failed: ${err.message}`);
+    }
   }
 
   /** The alarm names, once a day; best effort (the alerts then fall back to their severity). */
@@ -315,9 +396,10 @@ export class FloApp {
     }
     let wait;
     if (err.kind === 'rate_limited') {
-      wait = Math.max(
+      wait = clamp(
+        err.retryAfter ?? TIMINGS.rateLimitDefault,
         TIMINGS.rateLimitMin,
-        Math.min(TIMINGS.rateLimitMax, err.retryAfter ?? TIMINGS.rateLimitDefault),
+        TIMINGS.rateLimitMax,
       );
       this.pausedUntil = this.now() + wait;
       await this.setStatus(this.readAt !== undefined, T.rateLimited(age(wait)));
@@ -331,18 +413,7 @@ export class FloApp {
     this.logger.warn(`Flo: ${reason}; next try in ${Math.round(wait / 1000)} s`);
   }
 
-  // --- Readings, states, events ----------------------------------------------
-
-  /** A new reading of one device: kept; returns the scene events of its new alerts. */
-  update(reading) {
-    const previous = this.devices.get(reading.id);
-    this.devices.set(reading.id, reading);
-    const target = {
-      externalId: deviceIds(this.gladys, reading.id).device,
-      name: deviceName(reading, this.config.language),
-    };
-    return alertEvents(target, previous, reading, this.catalog, this.now());
-  }
+  // --- States, events, badges ------------------------------------------------
 
   async publishEvents(events) {
     for (const event of events) {
@@ -396,6 +467,7 @@ export class FloApp {
       for (const { role, ...value } of statesOf(device, {
         gallonsToday: this.gallons.get(device.id)?.gallons,
         catalog: this.catalog,
+        language: this.config.language,
       })) {
         const id = ids.feature(role);
         if (created.has(id)) {
@@ -406,10 +478,16 @@ export class FloApp {
     if (states.length === 0) {
       return;
     }
-    // A few devices of eight features at most a minute: far under the 300 states a minute.
+    // A few devices of nine features at most a minute: far under the 300 states a minute.
     await this.gladys
       .publishChangedStates(states, { heartbeat: TIMINGS.stateHeartbeat })
       .catch((err) => this.logger.warn(`Sending to Gladys failed: ${err.message}`));
+  }
+
+  /** States and badge of one device (after a command or a read back). */
+  async publishDevice(id) {
+    await this.publishStates(undefined, new Set([id]));
+    await this.publishTransports();
   }
 
   badge(device) {
@@ -505,26 +583,34 @@ export class FloApp {
     return device;
   }
 
-  /** The device read again from Flo, now: its states and events published too. */
-  async fresh(id) {
-    const reading = readingOf(await this.client.device(id));
-    reading.id ||= id;
-    reading.locationId ??= this.locationOf.get(id);
-    const events = this.update(reading);
-    await this.publishStates(undefined, new Set([id]));
-    await this.publishEvents(events);
-    await this.publishTransports();
-    return reading;
+  /**
+   * The request options of a command: short timeouts (what is left before
+   * `deadline`), and a guard refusing to send once it is past.
+   */
+  commandOptions(deadline) {
+    const left = (slack = 0) =>
+      clamp(deadline + slack - this.now(), TIMINGS.commandTimeoutMin, TIMINGS.commandTimeoutMax);
+    const check = () => {
+      if (this.now() > deadline) {
+        throw this.denied('tooLate');
+      }
+    };
+    return {
+      check,
+      read: { timeout: () => left() },
+      post: { timeout: () => left(TIMINGS.commandPostSlack), guard: check },
+    };
   }
 
-  /** Reads the devices back after a command, 15 s then 60 s later. */
+  /** Reads the devices back 15 s and 60 s after a command (no scene event: the refresh fires them). */
   readBack(ids) {
     for (const delay of TIMINGS.readBack) {
       const timer = this.timers.setTimeout(async () => {
         this.readBackTimers.delete(timer);
         for (const id of ids) {
           try {
-            await this.fresh(id);
+            await this.read(id);
+            await this.publishDevice(id);
           } catch (err) {
             this.logger.warn(`Read back of ${id} failed: ${err.message}`);
           }
@@ -536,10 +622,10 @@ export class FloApp {
 
   /**
    * Opens (`open` true) or closes a shutoff valve, behind the options, one
-   * command at a time per device, on a state read just now.
-   * Resolves `{ device, valve, changed }`.
+   * command at a time per device, on a state read just now, sent before
+   * `deadline` or not at all. Resolves `{ device, valve, changed }`.
    */
-  setValve(id, open) {
+  setValve(id, open, { deadline = this.now() + TIMINGS.sceneActionDeadline } = {}) {
     if (open && !this.config.allowValveOpen) {
       return Promise.reject(this.denied('valveOpen'));
     }
@@ -549,39 +635,58 @@ export class FloApp {
     return this.serialized(`valve:${id}`, async () => {
       const known = this.knownDevice(id);
       if (known.kind !== 'shutoff') {
-        throw new Error(`${deviceName(known, 'en')} has no valve`);
+        throw this.denied('noValve');
       }
       // The options may have changed while the command waited for its turn.
       if ((open && !this.config.allowValveOpen) || (!open && !this.config.allowValveClose)) {
         throw this.denied(open ? 'valveOpen' : 'valveClose');
       }
+      const options = this.commandOptions(deadline);
+      options.check();
       let device;
       try {
-        device = await this.fresh(id);
+        device = await this.read(id, options.read);
       } catch (err) {
         this.logger.warn(`Valve of ${deviceName(known, 'en')}: state not read (${err.message})`);
         throw this.denied('valveUnknown');
       }
-      const current = valveAtRest(device);
-      if (current === undefined) {
-        this.logger.warn(
-          `Valve of ${deviceName(device, 'en')}: refused (connected ${device.connected}, valve ${device.valve} -> ${device.valveTarget})`,
-        );
-        throw this.denied('valveUnknown');
-      }
       const target = open ? VALVE.OPEN : VALVE.CLOSED;
-      if (current === target) {
-        return { device, valve: current, changed: false };
+      try {
+        if (device.connected === true && device.valveTarget === target) {
+          // Already at the target, or already moving to it: nothing to send.
+          return { device, valve: target, changed: false };
+        }
+        const current = valveAtRest(device);
+        if (current === undefined) {
+          this.logger.warn(
+            `Valve of ${deviceName(device, 'en')}: refused (connected ${device.connected}, valve ${device.valve} -> ${device.valveTarget})`,
+          );
+          throw this.denied('valveUnknown');
+        }
+        if (current === target) {
+          return { device, valve: current, changed: false };
+        }
+        try {
+          await this.client.setValve(id, target, options.post);
+        } catch (err) {
+          // It may have reached the valve all the same: read it back.
+          this.readBack([id]);
+          throw err;
+        }
+        this.logger.info(`Valve of ${deviceName(device, 'en')}: ${target} requested`);
+        this.readBack([id]);
+        return { device, valve: target, changed: true };
+      } finally {
+        await this.publishDevice(id);
       }
-      await this.client.setValve(id, target);
-      this.logger.info(`Valve of ${deviceName(device, 'en')}: ${target} requested`);
-      this.readBack([id]);
-      return { device, valve: target, changed: true };
     });
   }
 
   /** Home or Away on the location of a device. Resolves `{ device, mode, changed }`. */
-  setMode(id, mode) {
+  setMode(id, mode, { deadline = this.now() + TIMINGS.sceneActionDeadline } = {}) {
+    if (!this.config.allowModeChange) {
+      return Promise.reject(this.denied('modeOff'));
+    }
     if (mode !== MODES.HOME && mode !== MODES.AWAY) {
       return Promise.reject(this.denied('sleep'));
     }
@@ -592,61 +697,77 @@ export class FloApp {
       return Promise.reject(err);
     }
     const locationId = known.locationId ?? this.locationOf.get(known.id);
+    const locationDevices = () =>
+      [...this.devices.values()]
+        .filter((d) => (d.locationId ?? this.locationOf.get(d.id)) === locationId)
+        .map((d) => d.id);
     return this.serialized(`mode:${locationId}`, async () => {
-      const device = await this.fresh(known.id);
-      if (device.modeLocked) {
-        throw this.denied('modeLocked');
+      if (!this.config.allowModeChange) {
+        throw this.denied('modeOff');
       }
-      if (device.mode === mode && (device.modeTarget ?? mode) === mode) {
-        return { device, mode, changed: false };
+      const options = this.commandOptions(deadline);
+      options.check();
+      const device = await this.read(known.id, options.read);
+      try {
+        if (device.modeLocked) {
+          throw this.denied('modeLocked');
+        }
+        if (device.mode === mode && (device.modeTarget ?? mode) === mode) {
+          return { device, mode, changed: false };
+        }
+        try {
+          await this.client.setMode(device.locationId ?? locationId, mode, options.post);
+        } catch (err) {
+          this.readBack(locationDevices());
+          throw err;
+        }
+        this.logger.info(`Flo location of ${deviceName(device, 'en')}: ${mode} requested`);
+        // Every device of the location follows its mode.
+        this.readBack(locationDevices());
+        return { device, mode, changed: true };
+      } finally {
+        await this.publishDevice(device.id);
       }
-      await this.client.setMode(device.locationId ?? locationId, mode);
-      this.logger.info(`Flo location of ${deviceName(device, 'en')}: ${mode} requested`);
-      // Every device of the location follows its mode.
-      this.readBack(
-        [...this.devices.values()]
-          .filter((d) => (d.locationId ?? this.locationOf.get(d.id)) === locationId)
-          .map((d) => d.id),
-      );
-      return { device, mode, changed: true };
     });
   }
 
-  /** Gladys command: the valve or the Away switch of a shutoff. */
+  /** Gladys command: the valve or the Away switch of a shutoff (acked within 5 s). */
   async setValueOf(_gladysDevice, feature, value) {
+    const deadline = this.now() + TIMINGS.setValueDeadline;
     const target = parseExternalId(feature?.external_id);
-    const on = Number(value);
     if (!target || !['valve', 'away'].includes(target.role)) {
-      throw new Error(`${feature?.external_id} cannot be set`);
+      throw this.denied('notCommand');
     }
+    const on = Number(value);
     if (on !== 0 && on !== 1) {
-      throw new Error(`Unexpected value "${value}" (0 or 1)`);
+      throw this.denied('badValue');
     }
     try {
       if (target.role === 'valve') {
-        await this.setValve(target.id, on === 1);
+        await this.setValve(target.id, on === 1, { deadline });
       } else {
-        await this.setMode(target.id, on === 1 ? MODES.AWAY : MODES.HOME);
+        await this.setMode(target.id, on === 1 ? MODES.AWAY : MODES.HOME, { deadline });
       }
     } finally {
-      // Gladys shows the value asked for: let the next publication send the real one.
+      // Gladys shows the value asked for: send the known one again, whatever happened.
       this.gladys.forgetPublishedStates?.(feature.external_id);
+      await this.publishStates(undefined, new Set([target.id]));
     }
-    await this.publishStates(undefined, new Set([target.id]));
   }
 
   // --- Scene actions ---------------------------------------------------------
 
   /** `{ device, action: open|close }` -> `{ device_name, valve, changed }`. */
   async sceneSetValve(fields = {}) {
+    const deadline = this.now() + TIMINGS.sceneActionDeadline;
     const target = parseExternalId(fields.device);
     if (!target) {
-      throw new Error('Pick a Flo Smart Water Shutoff');
+      throw this.denied('pickShutoff');
     }
     if (fields.action !== 'open' && fields.action !== 'close') {
-      throw new Error('The action is "open" or "close"');
+      throw this.denied('badAction');
     }
-    const result = await this.setValve(target.id, fields.action === 'open');
+    const result = await this.setValve(target.id, fields.action === 'open', { deadline });
     return {
       device_name: deviceName(result.device, this.config.language),
       valve: result.valve,
@@ -656,12 +777,16 @@ export class FloApp {
 
   /** `{ mode: home|away, device? }` -> `{ mode, locations }`; no device: every home. */
   async sceneSetMode(fields = {}) {
+    const deadline = this.now() + TIMINGS.sceneActionDeadline;
+    if (!this.config.allowModeChange) {
+      throw this.denied('modeOff');
+    }
     const mode = String(fields.mode ?? '');
     let ids;
     if (fields.device) {
       const target = parseExternalId(fields.device);
       if (!target) {
-        throw new Error('Unknown Flo device');
+        throw this.denied('unknownDevice');
       }
       ids = [target.id];
     } else {
@@ -682,7 +807,7 @@ export class FloApp {
       }
     }
     for (const id of ids) {
-      await this.setMode(id, mode);
+      await this.setMode(id, mode, { deadline });
     }
     return { mode, locations: ids.length };
   }

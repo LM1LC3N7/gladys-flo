@@ -84,6 +84,15 @@ export function floError(err, { signIn = false, now = Date.now() } = {}) {
   if (status >= 500 || (status === 403 && fromCloudFront(err))) {
     return new FloError('unavailable', `Flo is unavailable (${err.message})`, { status });
   }
+  // A 403 of the AWS API Gateway in front of the Moen sign-in (and maybe of the
+  // API): a missing route says "MissingAuthenticationToken", the others are a
+  // gateway refusal — neither is a verdict on the e-mail and password.
+  const awsError = String(err.headers?.get?.('x-amzn-errortype') ?? '');
+  if (status === 403 && awsError) {
+    return /MissingAuthenticationToken|NotFound/i.test(awsError)
+      ? new FloError('not_found', err.message, { status })
+      : new FloError('unavailable', `Flo is unavailable (${err.message})`, { status });
+  }
   if (status === 404 || status === 410) {
     return new FloError('not_found', err.message, { status });
   }
@@ -109,6 +118,8 @@ export class FloClient {
     this.session = null;
     /** The flow that worked last ("auto"): tried first next time. */
     this.preferred = undefined;
+    /** "auto": the Flo sign-in refused these credentials; only Moen until configure(). */
+    this.floRefused = false;
     this.renewing = undefined;
     /** Bumped by configure(): a session asked for older credentials is dropped. */
     this.generation = 0;
@@ -122,6 +133,7 @@ export class FloClient {
     this.loginMethod = loginMethod;
     this.session = null;
     this.preferred = undefined;
+    this.floRefused = false;
     this.generation += 1;
   }
 
@@ -164,6 +176,7 @@ export class FloClient {
     return {
       method: LOGIN_METHODS.FLO,
       token,
+      issuedAt: this.now(),
       expiresAt:
         Number.isFinite(end) && end > this.now() ? end : this.now() + TIMINGS.tokenLifetime,
       userId: String(userId),
@@ -185,6 +198,7 @@ export class FloClient {
     return {
       token: token.access_token,
       refreshToken: typeof token.refresh_token === 'string' ? token.refresh_token : undefined,
+      issuedAt: this.now(),
       expiresAt: this.now() + (seconds > 0 ? seconds * 1000 : TIMINGS.tokenLifetime),
     };
   }
@@ -207,9 +221,11 @@ export class FloClient {
         ? [LOGIN_METHODS.FLO]
         : this.loginMethod === LOGIN_METHODS.MOEN
           ? [LOGIN_METHODS.MOEN]
-          : this.preferred === LOGIN_METHODS.MOEN
-            ? [LOGIN_METHODS.MOEN, LOGIN_METHODS.FLO]
-            : [LOGIN_METHODS.FLO, LOGIN_METHODS.MOEN];
+          : this.floRefused
+            ? [LOGIN_METHODS.MOEN]
+            : this.preferred === LOGIN_METHODS.MOEN
+              ? [LOGIN_METHODS.MOEN, LOGIN_METHODS.FLO]
+              : [LOGIN_METHODS.FLO, LOGIN_METHODS.MOEN];
     let failure;
     for (const flow of flows) {
       try {
@@ -220,6 +236,10 @@ export class FloClient {
         // A passing failure (network, 5xx, 429) is not a reason to try the other flow.
         if (!TRY_OTHER.has(err.kind)) {
           throw err;
+        }
+        if (flow === LOGIN_METHODS.FLO && this.loginMethod === LOGIN_METHODS.AUTO) {
+          // Not sent again with these credentials: Moen only until they change.
+          this.floRefused = true;
         }
         failure = failure?.kind === 'refused' ? failure : err;
       }
@@ -274,8 +294,14 @@ export class FloClient {
     return this.renewing;
   }
 
+  /** Renewed min(5 min, half its lifetime) before it expires: a short token is not renewed at every call. */
   needsToken() {
-    return !this.session || this.now() >= this.session.expiresAt - TIMINGS.tokenMargin;
+    if (!this.session) {
+      return true;
+    }
+    const { issuedAt = this.now(), expiresAt } = this.session;
+    const margin = Math.min(TIMINGS.tokenMargin, Math.max(0, (expiresAt - issuedAt) / 2));
+    return this.now() >= expiresAt - margin;
   }
 
   async ensureSession() {
@@ -289,16 +315,24 @@ export class FloClient {
     return session.method === LOGIN_METHODS.MOEN ? `Bearer ${session.token}` : session.token;
   }
 
-  /** One API call; a refused token is renewed once and the call retried once. */
-  async call(path, { method = 'GET', body, query } = {}) {
+  /**
+   * One API call; a refused token is renewed once and the call retried once.
+   * `timeout`: of each request (a function: computed when it starts);
+   * `guard()`: called just before each request, may throw to cancel it.
+   */
+  async call(path, { method = 'GET', body, query, timeout, guard } = {}) {
     const session = await this.ensureSession();
     const options = (s) => ({
       method,
       body,
       query,
       headers: { Authorization: this.authorization(s) },
+      ...(timeout === undefined
+        ? {}
+        : { timeout: typeof timeout === 'function' ? timeout() : timeout }),
     });
     try {
+      guard?.();
       return await this.send(`${API.V2}${path}`, options(session));
     } catch (err) {
       if (err.kind !== 'unauthorized') {
@@ -309,6 +343,7 @@ export class FloClient {
         this.session = { ...session, expiresAt: 0 };
       }
       const fresh = await this.ensureSession();
+      guard?.();
       return this.send(`${API.V2}${path}`, options(fresh));
     }
   }
@@ -324,21 +359,23 @@ export class FloClient {
   }
 
   /** One device, with its telemetry, valve, mode and pending alerts. */
-  device(deviceId) {
-    return this.call(`/devices/${encodeURIComponent(deviceId)}`);
+  device(deviceId, options = {}) {
+    return this.call(`/devices/${encodeURIComponent(deviceId)}`, options);
   }
 
   /** `target`: "open" or "closed" (aioflo `open_valve` / `close_valve`). */
-  setValve(deviceId, target) {
+  setValve(deviceId, target, options = {}) {
     return this.call(`/devices/${encodeURIComponent(deviceId)}`, {
+      ...options,
       method: 'POST',
       body: { valve: { target } },
     });
   }
 
   /** `mode`: "home" or "away" (aioflo `set_mode_home` / `set_mode_away`). */
-  setMode(locationId, mode) {
+  setMode(locationId, mode, options = {}) {
     return this.call(`/locations/${encodeURIComponent(locationId)}/systemMode`, {
+      ...options,
       method: 'POST',
       body: { target: mode },
     });

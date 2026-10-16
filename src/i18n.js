@@ -23,7 +23,8 @@ export const FEATURE_NAMES = {
   pressure: { en: 'Water pressure', fr: "Pression de l'eau" },
   water_temperature: { en: 'Water temperature', fr: "Température de l'eau" },
   consumption_today: { en: 'Consumption today', fr: "Consommation aujourd'hui" },
-  alert: { en: 'Leak or flow alert', fr: 'Alerte fuite ou débit' },
+  leak_alert: { en: 'Leak alert', fr: 'Alerte fuite' },
+  alerts: { en: 'Pending alerts', fr: 'Alertes en attente' },
   leak: { en: 'Water leak', fr: "Fuite d'eau" },
   temperature: { en: 'Temperature', fr: 'Température' },
   humidity: { en: 'Humidity', fr: 'Humidité' },
@@ -69,7 +70,40 @@ export const T = {
     en: 'Flo reports this device offline.',
     fr: 'Flo signale cet appareil hors ligne.',
   },
+  noAlert: { en: 'none', fr: 'aucune' },
   denied: {
+    modeOff: {
+      en: 'Changing the Flo mode (Home/Away) from Gladys is turned off: allow it in the configuration of the Flo integration.',
+      fr: "Le changement de mode Flo (Maison/Absent) depuis Gladys est désactivé : autorisez-le dans la configuration de l'intégration Flo.",
+    },
+    tooLate: {
+      en: 'The command waited too long for its turn: refused rather than sent late. Try again.',
+      fr: 'La commande a attendu trop longtemps son tour : refusée plutôt qu’envoyée en retard. Réessayez.',
+    },
+    noValve: {
+      en: 'This Flo device has no valve.',
+      fr: "Cet appareil Flo n'a pas de vanne.",
+    },
+    notCommand: {
+      en: 'This Flo feature cannot be set.',
+      fr: 'Cette fonctionnalité Flo ne peut pas être commandée.',
+    },
+    badValue: {
+      en: 'Unexpected value: 0 or 1.',
+      fr: 'Valeur inattendue : 0 ou 1.',
+    },
+    pickShutoff: {
+      en: 'Pick a Flo Smart Water Shutoff.',
+      fr: "Choisissez une vanne d'arrêt Flo.",
+    },
+    badAction: {
+      en: 'The action is "open" or "close".',
+      fr: "L'action est « open » ou « close ».",
+    },
+    unknownDevice: {
+      en: 'Unknown Flo device.',
+      fr: 'Appareil Flo inconnu.',
+    },
     valveOpen: {
       en: 'Opening the Flo valve from Gladys is turned off: allow it in the configuration of the Flo integration.',
       fr: "L'ouverture de la vanne Flo depuis Gladys est désactivée : autorisez-la dans la configuration de l'intégration Flo.",

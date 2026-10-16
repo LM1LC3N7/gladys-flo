@@ -13,10 +13,10 @@ with Moen or Fortune Brands.
 
 ## What you get
 
-| Flo device                  | In Gladys                                                                                                                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Smart Water Shutoff (valve) | valve open/closed (settable, see "Safety"), away mode (settable), mode (text: home, away, sleep), flow m³/h, pressure psi, water temperature °C, today's use in litres, leak or flow alert |
-| Water Sensor (leak sensor)  | water leak, temperature °C, humidity %, battery %                                                                                                                                          |
+| Flo device                  | In Gladys                                                                                                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Smart Water Shutoff (valve) | valve open/closed and away mode (settable, see "Safety"), mode (text: home, away, sleep), flow m³/h, pressure psi, water temperature °C, today's use in litres, leak alert, pending alerts (text) |
+| Water Sensor (leak sensor)  | water leak, temperature °C, humidity %, battery %                                                                                                                                                 |
 
 Other Flo devices (bridge…) are skipped: the **Test the connection** button
 counts them.
@@ -37,17 +37,18 @@ probe sends a placeholder (225 °F): it is ignored.
 
 **Sign-in**: "Automatic" (default) tries the historical Flo sign-in, then the
 Moen one (newer Moen Smartwater accounts) when Flo refuses or no longer
-answers there. You can force either.
+answers there. Once Flo refused, only Moen is tried until the configuration
+changes. You can force either.
 
-## Safety: the valve is off by default
+## Safety: commands off by default
 
-Opening **and** closing the valve from Gladys are refused until you allow them
-in the configuration:
+These commands are refused until you allow them in the configuration:
 
-| Option                  | Default | Off: Gladys…              |
-| ----------------------- | ------- | ------------------------- |
-| Allow closing the valve | no      | never shuts the water off |
-| Allow opening the valve | no      | never turns the water on  |
+| Option                            | Default | Off: Gladys…               |
+| --------------------------------- | ------- | -------------------------- |
+| Allow closing the valve           | no      | never shuts the water off  |
+| Allow opening the valve           | no      | never turns the water on   |
+| Allow changing the Home/Away mode | no      | never changes the Flo mode |
 
 To shut the water off from a scene when a leak is detected, turn on "Allow
 closing the valve". Even allowed, a valve command:
@@ -55,32 +56,55 @@ closing the valve". Even allowed, a valve command:
 - runs **one at a time** for a device (two "close" at once are never sent
   together);
 - reads the device from Flo **just before acting**: if that read fails, the
-  device is offline, or the valve is moving or in an unknown state, the
-  command is **refused**; the state kept in memory never decides;
-- sends nothing when the valve is already where asked;
-- reads the device again 15 seconds and 60 seconds later, to show the real
-  position.
+  device is offline, or the valve is moving the other way or in an unknown
+  state, the command is **refused**; the state kept in memory never decides;
+- sends nothing when the valve is already where asked, or already moving
+  there;
+- is **refused rather than sent late** when it could not leave in time (3.5
+  seconds after the request from the dashboard, 25 seconds for a scene
+  action): Gladys would already have shown a failure;
+- reads the device again 15 seconds and 60 seconds later (even after a
+  failure), to show the real position.
 
-The **Home / Away** mode can always be changed (the "Away mode" switch or a
-scene action). **Sleep** needs a duration: it is shown, but set in the Moen
-app. A mode Flo has locked is refused.
+**Warning: as soon as a valve option is on, the valve is a Gladys switch like
+any other.** A voice assistant, a "turn everything off" command or a scene
+acting on every switch can then shut (or open) the water. Check your scenes
+and assistants before turning these options on.
+
+**Home / Away mode** (the "Away mode" switch or a scene action): off by
+default. **Switching to Home disarms the automatic shutoff Flo applies in
+Away**: turn the option on knowingly. **Sleep** needs a duration: it is shown,
+but set in the Moen app. A mode Flo has locked is refused.
 
 ## Scenes
 
 Triggers:
 
 - **Flo: leak detected**: a Water Sensor detects water, or Flo raises a new
-  leak alert (drip, failed health test);
-- **Flo: abnormal flow**: a new fast flow, long flow or high use alert;
+  **critical or warning** leak alert (water detected, drip, failed health
+  test); filtered by severity;
+- **Flo: abnormal flow**: a new critical or warning fast flow, long flow or
+  high use alert;
 - **Flo: new alert**: any new alert, filtered by severity and family.
 
-A trigger fires once per new alert (an alert still pending does not fire
-again, nor do the ones already pending at start). The family of an alert
-comes from its name in the Flo alarm catalog, read once a day; without the
-catalog, only critical alerts turn "Leak or flow alert" on.
+A trigger fires once per new alert, at the refresh that finds it (an alert
+still pending does not fire again). What the integration saw last is kept in
+`/data`: an alert raised during a restart fires at the next start. The alerts
+of a device never seen before do not fire (nothing says they are new).
+
+The family of an alert (leak, flow, other) comes from its name in the Flo
+alarm catalog, read once a day, matched against a list of known names. **When
+the catalog is unavailable** (or an alert is not in it), the alert is
+"other": only "new alert" fires, and, by caution, an unknown critical alert
+turns "Leak alert" on. The "Pending alerts" feature always lists every alert.
+
+**Recommended to shut the water off**: besides "leak detected", make a scene
+on the **"device state changed"** trigger of the **Water leak** feature of the
+Water Sensor (or **Leak alert** of the shutoff) going to 1. That state is read
+again at every refresh, even if a scene event was missed.
 
 Actions: **Flo: set Home or Away** (one home or all) and **Flo: open or close
-the valve** (behind the options above).
+the valve**, behind the options above.
 
 ## Usage limits
 
@@ -99,14 +123,15 @@ the valve** (behind the options above).
 
 ## Options
 
-| Option                        | Default   | Role                                       |
-| ----------------------------- | --------- | ------------------------------------------ |
-| E-mail, password              | —         | your Flo / Moen Smartwater account         |
-| Allow closing the valve       | no        | see "Safety"                               |
-| Allow opening the valve       | no        | see "Safety"                               |
-| Sign-in                       | Automatic | Flo then Moen, or either one               |
-| Refresh interval (min)        | 2         | how often the devices are read             |
-| Language of the feature names | French    | names of the features of the devices added |
+| Option                            | Default   | Role                                       |
+| --------------------------------- | --------- | ------------------------------------------ |
+| E-mail, password                  | —         | your Flo / Moen Smartwater account         |
+| Allow closing the valve           | no        | see "Safety"                               |
+| Allow opening the valve           | no        | see "Safety"                               |
+| Allow changing the Home/Away mode | no        | see "Safety"                               |
+| Sign-in                           | Automatic | Flo then Moen, or either one               |
+| Refresh interval (min)            | 2         | how often the devices are read             |
+| Language of the feature names     | French    | names of the features of the devices added |
 
 ## Troubleshooting
 
@@ -119,14 +144,18 @@ the valve** (behind the options above).
   (Wi-Fi, sensor batteries).
 - **"The state of the Flo valve could not be confirmed"**: the valve was
   offline, moving or unreadable when the command came; try again later.
+- **"The command waited too long for its turn"**: Flo answered slowly; try
+  again.
 
 ## Privacy
 
-The e-mail and password are stored by Gladys (the password as a secret, never
-sent back to the browser). They are only sent to the Flo sign-in
-(`api.meetflo.com`) and the Moen one (Amazon Cognito,
+The e-mail and password are **kept by Gladys in its database** (and so in its
+backups); the password is never shown again in the interface. They are only
+sent to the Flo sign-in (`api.meetflo.com`) and the Moen one (Amazon Cognito,
 `execute-api.us-east-2.amazonaws.com`), over HTTPS. The token stays in memory
-(nothing is written to `/data`) and never reaches a log.
+and never reaches a log. The only file written to `/data` (`flo-seen.json`)
+holds the alert counts and the "water detected" state of each device, no
+secret.
 
 Flo by Moen and Moen are trademarks of Moen Incorporated (Fortune Brands); this
 integration is not affiliated with Moen.

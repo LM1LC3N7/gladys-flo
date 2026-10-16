@@ -56,6 +56,12 @@ export function kindOf(info) {
   return 'other';
 }
 
+/** "Critical" -> "critical"; anything else than the three Flo severities -> undefined. */
+export function severityOf(value) {
+  const s = typeof value === 'string' ? value.trim().toLowerCase() : undefined;
+  return SEVERITIES.includes(s) ? s : undefined;
+}
+
 /** Pending alerts: [{ id, severity, count }], the ones with a count only. */
 export function pendingAlarmsOf(info) {
   const list = info?.notifications?.pending?.alarmCount;
@@ -65,7 +71,7 @@ export function pendingAlarmsOf(info) {
   return list
     .map((a) => ({
       id: finite(a?.id),
-      severity: SEVERITIES.includes(a?.severity) ? a.severity : 'info',
+      severity: severityOf(a?.severity),
       count: finite(a?.count) ?? 1,
     }))
     .filter((a) => a.id !== undefined && a.count > 0);
@@ -141,7 +147,7 @@ export function catalogOf(answer) {
       catalog.set(id, {
         name: text(item.name) ?? String(id),
         title: text(item.displayName) ?? text(item.name) ?? String(id),
-        severity: SEVERITIES.includes(item.severity) ? item.severity : undefined,
+        severity: severityOf(item.severity),
       });
     }
   }
@@ -149,22 +155,52 @@ export function catalogOf(answer) {
 }
 
 /**
- * The family of an alarm, from its catalog name: water on the floor, a drip
- * or a failed health test (a leak in the pipes) -> leak; a fast or long flow,
- * a high use -> flow. The ids are not documented: the names are the safer key.
+ * Alarm names whose family is known, matched exactly (no pattern: a name we
+ * do not know stays "other"). Taken from the names Flo exposes in the
+ * fixtures of aioflo (`fwProperties` keys: high_flow_rate, high_water_use,
+ * long_flow_event; health_test_*) and the alerts the Moen app and Home
+ * Assistant users report (fast water flow, small drip, water detected). Not
+ * confirmed on a real catalog: see TODO.md "To check".
  */
+export const KNOWN_ALARMS = {
+  [ALERT_CATEGORIES.LEAK]: new Set([
+    'water_detected',
+    'small_drip',
+    'small_drip_category_1',
+    'small_drip_category_2',
+    'small_drip_category_3',
+    'small_drip_category_4',
+    'health_test_failed',
+  ]),
+  [ALERT_CATEGORIES.FLOW]: new Set([
+    'fast_water_flow',
+    'high_flow_rate',
+    'high_water_usage',
+    'high_water_use',
+    'extended_water_use',
+    'long_flow_event',
+  ]),
+};
+
+/** The family of an alarm name: leak, flow, or other (unknown names included). */
 export function categoryOf(name) {
-  const n = String(name ?? '').toLowerCase();
-  if (/water_detected|leak|drip|health_test_fail/.test(n)) {
-    return ALERT_CATEGORIES.LEAK;
-  }
-  if (/flow|water_use|water_usage|usage/.test(n)) {
-    return ALERT_CATEGORIES.FLOW;
+  const n = String(name ?? '')
+    .trim()
+    .toLowerCase();
+  for (const [category, names] of Object.entries(KNOWN_ALARMS)) {
+    if (names.has(n)) {
+      return category;
+    }
   }
   return ALERT_CATEGORIES.OTHER;
 }
 
-/** A pending alarm with its catalog entry: { id, name, title, severity, category }. */
+/**
+ * A pending alarm with its catalog entry: { id, name, title, severity,
+ * category, known }. `known`: the catalog had the id. Without it (catalog
+ * unavailable, or a new id) the family is "other" and the severity is the
+ * only clue.
+ */
 export function describeAlarm(alarm, catalog) {
   const entry = catalog?.get(alarm.id);
   const name = entry?.name ?? `alarm_${alarm.id}`;
@@ -172,20 +208,32 @@ export function describeAlarm(alarm, catalog) {
     id: alarm.id,
     name,
     title: entry?.title ?? name,
-    severity: alarm.severity ?? entry?.severity ?? 'info',
+    severity: alarm.severity ?? entry?.severity,
     category: entry ? categoryOf(entry.name) : ALERT_CATEGORIES.OTHER,
+    known: Boolean(entry),
   };
 }
 
 /**
- * The "alert" binary of a shutoff: a leak or flow alert pending, or any
- * critical one (the only sure sign when the catalog could not be read).
+ * The leak alert binary of a shutoff: a pending alert of the leak family; when
+ * the catalog does not know an alert (unavailable), a critical one counts too,
+ * by caution.
  */
 export function hasLeakAlert(reading, catalog) {
   return reading.alarms.some((alarm) => {
     const a = describeAlarm(alarm, catalog);
-    return a.severity === 'critical' || a.category !== ALERT_CATEGORIES.OTHER;
+    return a.known ? a.category === ALERT_CATEGORIES.LEAK : a.severity === 'critical';
   });
+}
+
+/** The pending alerts as one line: "Fast Water Flow (critical), Small Drip (warning)". */
+export function alertsText(reading, catalog, none) {
+  const parts = reading.alarms.map((alarm) => {
+    const a = describeAlarm(alarm, catalog);
+    return a.severity ? `${a.title} (${a.severity})` : a.title;
+  });
+  const line = parts.length ? parts.join(', ') : none;
+  return line.length > 250 ? `${line.slice(0, 249)}…` : line;
 }
 
 /** Today's consumption in gallons (GET /water/consumption). */

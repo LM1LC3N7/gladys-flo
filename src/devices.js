@@ -13,8 +13,8 @@ import {
   DEVICE_FEATURE_UNITS as U,
 } from '@gladysassistant/integration-sdk';
 import { CONVERT, GLADYS, MODES } from './constants.js';
-import { FEATURE_NAMES, TYPE_NAMES, word } from './i18n.js';
-import { hasLeakAlert } from './flo/model.js';
+import { FEATURE_NAMES, T, TYPE_NAMES, word } from './i18n.js';
+import { alertsText, hasLeakAlert } from './flo/model.js';
 
 const binary = { min: 0, max: 1 };
 const command = { read_only: false, has_feedback: true };
@@ -53,7 +53,10 @@ export const FEATURES = {
     min: 0,
     max: 1_000_000,
   },
-  alert: { category: C.LEAK_SENSOR, type: TY.SENSOR.BINARY, ...binary },
+  // 1 while an alert of the leak family is pending (src/flo/model.js hasLeakAlert).
+  leak_alert: { category: C.LEAK_SENSOR, type: TY.SENSOR.BINARY, ...binary },
+  // Every pending alert, as text (flow alerts and the others included).
+  alerts: { category: C.TEXT, type: TY.TEXT.TEXT, min: 0, max: 0, keep_history: false },
   // Water Sensor
   leak: { category: C.LEAK_SENSOR, type: TY.SENSOR.BINARY, ...binary },
   temperature: {
@@ -82,7 +85,8 @@ export const ROLES = {
     'pressure',
     'water_temperature',
     'consumption_today',
-    'alert',
+    'leak_alert',
+    'alerts',
   ],
   sensor: ['leak', 'temperature', 'humidity', 'battery'],
 };
@@ -144,9 +148,9 @@ const bit = (value) => (value ? GLADYS.ON : GLADYS.OFF);
 
 /**
  * The Gladys states of one reading: `[{ role, state }]` or `[{ role, text }]`.
- * `extra`: { gallonsToday } (shutoff), `catalog` (alarm names).
+ * `extra`: { gallonsToday } (shutoff), `catalog` (alarm names), `language`.
  */
-export function statesOf(device, { gallonsToday, catalog } = {}) {
+export function statesOf(device, { gallonsToday, catalog, language } = {}) {
   const states = [];
   const add = (role, state) => {
     if (state !== undefined && Number.isFinite(state)) {
@@ -175,7 +179,8 @@ export function statesOf(device, { gallonsToday, catalog } = {}) {
       'consumption_today',
       gallonsToday === undefined ? undefined : round(CONVERT.galToL(gallonsToday), 1),
     );
-    add('alert', bit(hasLeakAlert(device, catalog)));
+    add('leak_alert', bit(hasLeakAlert(device, catalog)));
+    states.push({ role: 'alerts', text: alertsText(device, catalog, word(T.noAlert, language)) });
   } else if (device.kind === 'sensor') {
     add('leak', device.water === undefined ? undefined : bit(device.water));
     add(

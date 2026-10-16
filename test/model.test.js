@@ -11,13 +11,15 @@ import {
   catalogOf,
   categoryOf,
   consumptionOf,
+  alertsText,
   hasLeakAlert,
   localDay,
   locationsOf,
   readingOf,
+  severityOf,
   valveAtRest,
 } from '../src/flo/model.js';
-import { alertEvents } from '../src/triggers.js';
+import { alertEvents, seenOf } from '../src/triggers.js';
 import { LOCATION, NOW, SENSOR, SHUTOFF, fixture } from './helpers/fakeFlo.js';
 
 test('the locations and their devices', () => {
@@ -77,6 +79,10 @@ test('alert families from the alarm names', () => {
   assert.equal(categoryOf('health_test_failed'), 'leak');
   assert.equal(categoryOf('health_test_skipped'), 'other');
   assert.equal(categoryOf(undefined), 'other');
+  // Exact names only: no pattern guesses a family.
+  assert.equal(categoryOf('leak_sensor_offline'), 'other');
+  assert.equal(categoryOf('low_flow_battery'), 'other');
+  assert.equal(categoryOf('Small_Drip'), 'leak');
   const catalog = catalogOf(fixture('alarms.json'));
   assert.equal(catalog.get(10).title, 'Fast Water Flow');
   const r = readingOf(fixture('device-shutoff.json'));
@@ -87,6 +93,11 @@ test('alert families from the alarm names', () => {
   assert.equal(
     hasLeakAlert({ ...r, alarms: [{ id: 28, severity: 'warning', count: 1 }] }, catalog),
     true,
+  );
+  // A flow alert is not a leak, even critical.
+  assert.equal(
+    hasLeakAlert({ ...r, alarms: [{ id: 10, severity: 'critical', count: 1 }] }, catalog),
+    false,
   );
   // Without the catalog, only a critical alert counts.
   assert.equal(
@@ -117,6 +128,7 @@ test('the configuration: valves off by default, bounds, booleans from forms', ()
   const c = normalizeConfig({});
   assert.equal(c.allowValveOpen, false);
   assert.equal(c.allowValveClose, false);
+  assert.equal(c.allowModeChange, false);
   assert.equal(c.loginMethod, 'auto');
   assert.equal(c.refreshInterval, 2);
   const d = normalizeConfig({
@@ -146,15 +158,59 @@ test('alert events: only new alerts, one leak per reading', () => {
     alarms: [{ id: 100, severity: 'critical', count: 1 }],
   };
   const target = { externalId: 'ext:flo:flo:x', name: 'Closet' };
-  assert.deepEqual(alertEvents(target, undefined, after, catalog, NOW), [], 'first reading');
-  const events = alertEvents(target, before, after, catalog, NOW);
+  assert.deepEqual(alertEvents(target, undefined, after, catalog, NOW), [], 'never seen');
+  const events = alertEvents(target, seenOf(before), after, catalog, NOW);
   assert.deepEqual(
     events.map((e) => e.key),
     ['alert_raised', 'leak_detected'],
   );
   assert.equal(events[1].data.raised_at, new Date(NOW).toISOString());
-  assert.deepEqual(alertEvents(target, after, after, catalog, NOW), []);
+  assert.deepEqual(alertEvents(target, seenOf(after), after, catalog, NOW), []);
   // A count that goes up is a new occurrence.
   const again = { ...after, alarms: [{ id: 100, severity: 'critical', count: 2 }] };
-  assert.equal(alertEvents(target, after, again, catalog, NOW).length, 2);
+  assert.equal(alertEvents(target, seenOf(after), again, catalog, NOW).length, 2);
+  // An info leak alert: alert_raised only.
+  const shutoff = readingOf(fixture('device-shutoff.json'));
+  const keys = (alarm, cat = catalog) =>
+    alertEvents(target, seenOf(shutoff), { ...shutoff, alarms: [alarm] }, cat, NOW).map(
+      (e) => e.key,
+    );
+  assert.deepEqual(keys({ id: 28, severity: 'info', count: 1 }), ['alert_raised']);
+  // No severity on the alert: the catalog's (warning for a drip).
+  assert.deepEqual(keys({ id: 28, severity: undefined, count: 1 }), [
+    'alert_raised',
+    'leak_detected',
+  ]);
+  // No severity anywhere: alert_raised only.
+  assert.deepEqual(keys({ id: 28, severity: undefined, count: 1 }, new Map()), ['alert_raised']);
+});
+
+test('severities: normalized, unknown ones dropped', () => {
+  assert.equal(severityOf('Critical'), 'critical');
+  assert.equal(severityOf(' WARNING '), 'warning');
+  assert.equal(severityOf('urgent'), undefined);
+  assert.equal(severityOf(undefined), undefined);
+  const info = fixture('device-shutoff.json');
+  info.notifications.pending.alarmCount = [
+    { id: 1, count: 1 },
+    { id: 2, severity: 'Info' },
+  ];
+  assert.deepEqual(readingOf(info).alarms, [
+    { id: 1, severity: undefined, count: 1 },
+    { id: 2, severity: 'info', count: 1 },
+  ]);
+});
+
+test('the pending alerts text', () => {
+  const catalog = catalogOf(fixture('alarms.json'));
+  const r = readingOf(fixture('device-shutoff.json'));
+  assert.equal(alertsText(r, catalog, 'none'), 'none');
+  const two = {
+    ...r,
+    alarms: [
+      { id: 10, severity: 'critical', count: 1 },
+      { id: 55, severity: undefined, count: 1 },
+    ],
+  };
+  assert.equal(alertsText(two, catalog, 'none'), 'Fast Water Flow (critical), alarm_55');
 });

@@ -11,6 +11,9 @@ export const DEFAULTS = {
   // Louis's rule: a valve is never opened nor closed until the user allows it.
   allow_valve_open: false,
   allow_valve_close: false,
+  // Home disarms Flo's automatic shutoff of Away: off too — PROVISIONAL,
+  // pending Louis's decision (see TODO.md).
+  allow_mode_change: false,
   language: 'fr',
 };
 
@@ -43,6 +46,7 @@ export function normalizeConfig(raw = {}) {
       : DEFAULTS.refresh_interval,
     allowValveOpen: flag(raw?.allow_valve_open, DEFAULTS.allow_valve_open),
     allowValveClose: flag(raw?.allow_valve_close, DEFAULTS.allow_valve_close),
+    allowModeChange: flag(raw?.allow_mode_change, DEFAULTS.allow_mode_change),
     language: LANGUAGES.includes(language) ? language : DEFAULTS.language,
   };
 }

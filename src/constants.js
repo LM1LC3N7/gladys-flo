@@ -105,6 +105,18 @@ export const TIMINGS = {
   rateLimitMin: 60_000,
   rateLimitMax: 60 * 60_000,
   rateLimitDefault: 5 * 60_000,
+  /**
+   * A command must reach Flo before Gladys stops waiting for its answer:
+   * set_value is acked within 5 s (refused if not sent within 3.5 s of its
+   * arrival), a scene action within its timeout_seconds (30 s; 25 s here).
+   */
+  setValueDeadline: 3_500,
+  sceneActionDeadline: 25_000,
+  /** Network timeout of a request of a command: what is left of the deadline, within these bounds. */
+  commandTimeoutMin: 500,
+  commandTimeoutMax: 10_000,
+  /** The command POST may run this long past the deadline (the ack still fits in 5 s). */
+  commandPostSlack: 1_000,
   /** After a valve or mode command, the device is read back after these delays. */
   readBack: [15_000, 60_000],
   /** The test button and the Discovery scan read Flo at most this often. */
