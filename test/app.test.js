@@ -310,21 +310,64 @@ test('refused credentials: status, no retry by itself, the test button retries',
   assert.equal(app.refused, true);
   const answer = await action(gladys, ACTIONS.TEST_CONNECTION);
   assert.match(answer.en, /refused/);
-  // Flo refused these credentials: only Moen until the configuration changes.
-  assert.equal(fake.calls.length, 3, 'one more sign-in per click');
-  assert.match(fake.calls.at(-1).path, /oauth2\/token$/);
+  // The button tries both flows again: Flo, then Moen.
+  assert.deepEqual(
+    fake.calls.slice(2).map((c) => c.path.split('/').at(-1)),
+    ['auth', 'token'],
+  );
   await gladys.fake.configUpdated(CONFIG);
-  assert.match(fake.calls[3].path, /users\/auth$/, 'new credentials: Flo again');
+  assert.match(fake.calls[4].path, /users\/auth$/, 'new credentials: Flo again');
   assert.equal(gladys.fake.connectionStatus.connected, true);
 });
 
-test('a 401/403 on one device skips it, the others go on', async () => {
+test('a passing Flo refusal: Moen meanwhile, the test button tries Flo again', async () => {
+  const { gladys, app, advance } = await setup({
+    before: (f) => {
+      f.state.floAuth = 'refuse';
+    },
+  });
+  assert.equal(app.client.method, 'moen');
+  // Moen tokens last an hour: the renewal only asks Moen.
+  await advance(60);
+  assert.equal(fake.made(/users\/auth/).length, 1, 'Flo not asked again by itself');
+  fake.state.floAuth = 'ok';
+  app.client.session = null;
+  await action(gladys, ACTIONS.TEST_CONNECTION);
+  assert.equal(fake.made(/users\/auth/).length, 2, 'the button tries Flo again');
+  assert.equal(app.client.method, 'flo');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('a 403 on one device skips it for an hour, without any new sign-in', async () => {
   const { gladys, app, advance } = await setup();
   fake.route('GET', new RegExp(`devices/${SENSOR}$`), () => json({ message: 'no' }, 403));
-  await advance(2);
+  const reads = () => fake.made(new RegExp(`GET .*devices/${SENSOR}$`)).length;
+  const before = reads();
+  await advance(10);
+  assert.equal(fake.made(/users\/auth/).length, 1, '0 more sign-in in 10 minutes');
+  assert.equal(reads(), before + 1, 'asked once, then paused');
   assert.equal(app.devices.has(SENSOR), false);
   assert.equal(app.devices.has(SHUTOFF), true);
   assert.equal(gladys.fake.connectionStatus.connected, true);
+  await advance(52);
+  assert.equal(reads(), before + 2, 'asked again after an hour');
+  assert.equal(fake.made(/users\/auth/).length, 1);
+});
+
+test('a 401 on one device: one renewal, then the device is paused', async () => {
+  const { app, advance } = await setup();
+  fake.route('GET', new RegExp(`devices/${SENSOR}$`), () => json({ message: 'no' }, 401));
+  await advance(10);
+  assert.equal(fake.made(/users\/auth/).length, 2, 'one renewal, not one per refresh');
+  assert.equal(app.devices.has(SENSOR), false);
+});
+
+test('a token issued less than 60 s ago is never renewed on a 401', async () => {
+  const { gladys } = await setup({
+    before: (f) => f.route('GET', /\/users\/[^/]+$/, () => json({ message: 'no' }, 401)),
+  });
+  assert.equal(fake.made(/users\/auth/).length, 1, 'the fresh token is kept');
+  assert.equal(gladys.fake.connectionStatus.connected, false);
 });
 
 test('a token refused by the API is renewed once, then the call retried', async () => {
@@ -474,6 +517,8 @@ test('the state in memory never decides: a valve closed elsewhere is read again'
   fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'closed' };
   await app_set(gladys, 0);
   assert.equal(fake.made(/^POST .*devices/).length, 0);
+  // The publications to Gladys run after the ack.
+  await app.settled();
   assert.equal(last(gladys, SHUTOFF, 'valve'), 0);
 });
 
@@ -506,22 +551,42 @@ test('a Water Sensor has no valve', async () => {
 });
 
 test('a valve already moving to the target: nothing sent, no error', async () => {
-  const { gladys, app } = await setup();
+  const { gladys, app, timers } = await setup();
   await allow(gladys, { allow_valve_close: true });
   fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'open' };
   const result = await app.setValve(SHUTOFF, false);
   assert.equal(result.changed, false);
-  assert.equal(result.valve, 'closed');
+  assert.equal(result.valve, 'open', 'the real position, not the target');
   assert.equal(fake.made(/^POST .*devices/).length, 0);
+  assert.equal(timers.timeouts().length, 2, 'followed until it gets there');
+});
+
+test('the ack does not wait for the publications to Gladys', async () => {
+  const { gladys, app } = await setup();
+  await allow(gladys, { allow_valve_close: true });
+  let release;
+  const original = gladys.publishChangedStates.bind(gladys);
+  gladys.publishChangedStates = async (...args) => {
+    await new Promise((resolve) => (release = resolve));
+    return original(...args);
+  };
+  const result = await app.setValve(SHUTOFF, false);
+  assert.equal(result.changed, true, 'resolved while Gladys has not answered');
+  assert.equal(app.pending.size > 0, true);
+  gladys.publishChangedStates = original;
+  release();
+  await app.settled();
+  assert.equal(app.pending.size, 0);
 });
 
 test('a failed valve command is read back all the same', async () => {
-  const { gladys, timers } = await setup();
+  const { gladys, timers, app } = await setup();
   await allow(gladys, { allow_valve_close: true });
   fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 503));
   await assert.rejects(app_set(gladys, 0), /unavailable/);
   assert.equal(timers.timeouts().length, 2, 'read back at 15 s and 60 s');
   // The known state is published again (Gladys showed the value asked for).
+  await app.settled();
   assert.equal(last(gladys, SHUTOFF, 'valve'), 1);
 });
 
@@ -597,13 +662,14 @@ test('an older answer never overwrites a newer one; no duplicate trigger', async
 // --- Mode -----------------------------------------------------------------------------
 
 test('Home/Away is refused by default (Home disarms the automatic shutoff)', async () => {
-  const { gladys } = await setup();
+  const { gladys, app } = await setup();
   await assert.rejects(set(gladys, SHUTOFF, 'away', 1), /changement de mode Flo/);
   await assert.rejects(
     sceneAction(gladys, SCENE_ACTIONS.SET_MODE, { mode: 'away' }),
     /changement de mode Flo/,
   );
   assert.equal(fake.made(/systemMode/).length, 0);
+  await app.settled();
   assert.equal(last(gladys, SHUTOFF, 'away'), 0, 'the known state sent again');
 });
 

@@ -97,6 +97,10 @@ export const TIMINGS = {
   stateHeartbeat: 30 * 60_000,
   /** Renew the token this long before it expires (aioflo keeps 60 s; more is safer). */
   tokenMargin: 5 * 60_000,
+  /** A token younger than this is never renewed because a call was refused. */
+  tokenMinAge: 60_000,
+  /** A device Flo refuses (401/403 after renewal) is not asked again for this long. */
+  forbiddenDevicePause: 60 * 60_000,
   /** Token lifetime when the answer gives none (aioflo assumes 1 h for SSO). */
   tokenLifetime: 60 * 60_000,
   /** Pauses after a failed refresh: 1, 2, 5, 10 then 15 minutes. */

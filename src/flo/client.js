@@ -137,6 +137,15 @@ export class FloClient {
     this.generation += 1;
   }
 
+  /**
+   * Forgets a Flo refusal of "auto" (it may have been passing): the next
+   * sign-in tries Flo first again, then Moen (test button).
+   */
+  retryAll() {
+    this.floRefused = false;
+    this.preferred = undefined;
+  }
+
   get hasCredentials() {
     return this.email !== '' && this.password !== '';
   }
@@ -335,7 +344,15 @@ export class FloClient {
       guard?.();
       return await this.send(`${API.V2}${path}`, options(session));
     } catch (err) {
-      if (err.kind !== 'unauthorized') {
+      // Only a 401 says the token is refused (a 403 is a refusal of the
+      // resource: one device, a route), and never for a token just issued —
+      // otherwise one forbidden device costs a password sign-in per refresh.
+      const issuedAt = session.issuedAt ?? -Infinity;
+      if (
+        err.kind !== 'unauthorized' ||
+        err.status !== 401 ||
+        this.now() - issuedAt < TIMINGS.tokenMinAge
+      ) {
         throw err;
       }
       if (this.session === session) {

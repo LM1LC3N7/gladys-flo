@@ -72,7 +72,24 @@ export class FloApp {
     /** key -> tail of its command chain: one valve / mode command at a time. */
     this.chains = new Map();
     this.readBackTimers = new Set();
+    /** Publications to Gladys started without waiting (after a command). */
+    this.pending = new Set();
     this.reset();
+  }
+
+  /** Runs `promise` without waiting for it; its error is logged. */
+  background(promise) {
+    const p = Promise.resolve(promise)
+      .catch((err) => this.logger.warn(`Publishing to Gladys failed: ${err.message}`))
+      .finally(() => this.pending.delete(p));
+    this.pending.add(p);
+  }
+
+  /** Resolves once the publications started in the background are done (tests, shutdown). */
+  async settled() {
+    while (this.pending.size > 0) {
+      await Promise.all([...this.pending]);
+    }
   }
 
   /** Forgets the account and the failures: new credentials, or a restart. */
@@ -86,6 +103,8 @@ export class FloApp {
     this.locations = new Map();
     /** Flo device id -> location id, from the account */
     this.locationOf = new Map();
+    /** Flo device id -> until when it is not read (Flo refused it: 401/403) */
+    this.forbidden = new Map();
     this.skipped = [];
     /** shutoff id -> { day, gallons, at } */
     this.gallons = new Map();
@@ -229,12 +248,18 @@ export class FloApp {
             return;
           }
           this.locationOf.set(id, location.id);
+          if ((this.forbidden.get(id) ?? 0) > this.now()) {
+            continue; // refused by Flo lately: asked again after the pause
+          }
           let reading;
           try {
             reading = await this.read(id);
           } catch (err) {
             if (!DEVICE_SKIPPED.has(err.kind)) {
               throw err;
+            }
+            if (err.kind === 'unauthorized') {
+              this.forbidden.set(id, this.now() + TIMINGS.forbiddenDevicePause);
             }
             this.logger.info(`Flo device ${id} skipped (${err.message})`);
             continue;
@@ -653,8 +678,12 @@ export class FloApp {
       const target = open ? VALVE.OPEN : VALVE.CLOSED;
       try {
         if (device.connected === true && device.valveTarget === target) {
-          // Already at the target, or already moving to it: nothing to send.
-          return { device, valve: target, changed: false };
+          // Already at the target, or already moving to it: nothing to send;
+          // the real position is returned, and followed until it gets there.
+          if (device.valve !== target) {
+            this.readBack([id]);
+          }
+          return { device, valve: device.valve, changed: false };
         }
         const current = valveAtRest(device);
         if (current === undefined) {
@@ -677,7 +706,8 @@ export class FloApp {
         this.readBack([id]);
         return { device, valve: target, changed: true };
       } finally {
-        await this.publishDevice(id);
+        // Not awaited: the ack of the command does not wait for Gladys.
+        this.background(this.publishDevice(id));
       }
     });
   }
@@ -726,7 +756,7 @@ export class FloApp {
         this.readBack(locationDevices());
         return { device, mode, changed: true };
       } finally {
-        await this.publishDevice(device.id);
+        this.background(this.publishDevice(device.id));
       }
     });
   }
@@ -751,7 +781,7 @@ export class FloApp {
     } finally {
       // Gladys shows the value asked for: send the known one again, whatever happened.
       this.gladys.forgetPublishedStates?.(feature.external_id);
-      await this.publishStates(undefined, new Set([target.id]));
+      this.background(this.publishStates(undefined, new Set([target.id])));
     }
   }
 
@@ -829,8 +859,12 @@ export class FloApp {
       return T.rateLimited(age(this.pausedUntil - this.now()));
     }
     this.lastTestAt = this.now();
-    // One sign-in per click: the button is how refused credentials are retried.
+    // One sign-in per click: the button is how refused credentials are retried,
+    // with both flows again (a Flo refusal may have been passing), and the
+    // devices Flo refused lately are asked again.
     this.refused = false;
+    this.client.retryAll();
+    this.forbidden.clear();
     this.nextRefreshAt = 0;
     await this.running;
     await this.refresh();

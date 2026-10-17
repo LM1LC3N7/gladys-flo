@@ -149,8 +149,17 @@ up to date at the end of every milestone.
   the configuration changes. A 403 with `x-amzn-errortype` (AWS API Gateway)
   is `not_found` (MissingAuthenticationToken) or passing, never "refused".
   Token renewed min(5 min, half its lifetime) before expiry.
-- **A 401/403 on one device** (after the token renewal) skips that device for
-  the refresh, like a 404.
+- **Token renewal on a refusal** (approval): only on a 401 (a 403 refuses the
+  resource, not the token), and never for a token issued less than 60 s ago.
+  A device Flo refuses (401/403, after that renewal) is skipped and not read
+  again for 1 h (the test button asks again at once): one forbidden device no
+  longer costs a password sign-in per refresh.
+- **Test button and "auto"** (approval): the button forgets a Flo refusal
+  (`client.retryAll()`) and tries Flo first, then Moen: a passing Flo refusal
+  does not lock the account on Moen.
+- **Commands** (approval): the ack does not wait for the publications to
+  Gladys after the POST (started in the background, errors logged); a valve
+  already moving to the target returns its real position and is read back.
 - **Password**: kept by Gladys in its database in clear (a `secret` field is
   only hidden in the interface, and is in the backups); the docs and the
   manifest say so, no "encrypted" claim.
