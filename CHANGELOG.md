@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
 ### Added
 
 - Flo by Moen account through its e-mail and password: the Flo sign-in, the
@@ -35,4 +37,5 @@ the notes of the version's GitHub Release.
 - "Test the connection" button with a summary of the account.
 - Feature names in French or English.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-flo/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-flo/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-flo/releases/tag/v0.1.1

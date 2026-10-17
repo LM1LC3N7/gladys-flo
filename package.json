@@ -1,6 +1,6 @@
 {
   "name": "gladys-flo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Flo by Moen (Smart Water Shutoff and Water Sensors, through the Flo cloud). Unofficial, not affiliated with Moen.",
   "type": "module",

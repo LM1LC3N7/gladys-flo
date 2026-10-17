@@ -6,8 +6,8 @@
     "en": "Unofficial: Flo by Moen water shutoff and leak sensors, flow, pressure, alerts, Home/Away.",
     "fr": "Non officiel : vanne d'arrêt et détecteurs de fuite Flo by Moen, débit, pression, alertes."
   },
-  "version": "0.1.0",
-  "docker_image": "ghcr.io/lm1lc3n7/gladys-flo:0.1.0",
+  "version": "0.1.1",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-flo:0.1.1",
   "gladys_version": ">=5.1.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-flo/main/cover.png",
   "categories": ["security", "environment"],
