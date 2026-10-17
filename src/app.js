@@ -241,6 +241,7 @@ export class FloApp {
       const locations = locationsOf(await this.client.account());
       await this.readCatalog();
       const kept = new Set();
+      const inAccount = new Set();
       const skipped = [];
       for (const location of locations) {
         for (const { id } of location.devices) {
@@ -248,8 +249,14 @@ export class FloApp {
             return;
           }
           this.locationOf.set(id, location.id);
-          if ((this.forbidden.get(id) ?? 0) > this.now()) {
-            continue; // refused by Flo lately: asked again after the pause
+          inAccount.add(id);
+          if (this.paused(id)) {
+            // Refused by Flo lately: asked again after the pause. Still a known
+            // device (unreachable badge), its seen state kept for its return.
+            if (this.devices.has(id)) {
+              kept.add(id);
+            }
+            continue;
           }
           let reading;
           try {
@@ -260,6 +267,9 @@ export class FloApp {
             }
             if (err.kind === 'unauthorized') {
               this.forbidden.set(id, this.now() + TIMINGS.forbiddenDevicePause);
+              if (this.devices.has(id)) {
+                kept.add(id);
+              }
             }
             this.logger.info(`Flo device ${id} skipped (${err.message})`);
             continue;
@@ -285,6 +295,11 @@ export class FloApp {
         if (!kept.has(id)) {
           this.devices.delete(id);
           this.gallons.delete(id);
+        }
+      }
+      // The seen state goes with the device leaving the account, not with a pause.
+      for (const id of [...this.seen.keys()]) {
+        if (!inAccount.has(id)) {
           this.seen.delete(id);
         }
       }
@@ -320,6 +335,11 @@ export class FloApp {
     reading.seq = seq;
     this.update(reading);
     return reading;
+  }
+
+  /** Flo refused this device lately: not read until the pause ends. */
+  paused(id) {
+    return (this.forbidden.get(id) ?? 0) > this.now();
   }
 
   /** Keeps a reading, unless it is older than the one in memory. */
@@ -518,6 +538,9 @@ export class FloApp {
   badge(device) {
     if (this.refused || this.offline) {
       return { transport: DEVICE_TRANSPORTS.UNREACHABLE };
+    }
+    if (this.paused(device.id)) {
+      return { transport: DEVICE_TRANSPORTS.UNREACHABLE, degraded: true, message: T.forbidden };
     }
     if (device.connected === false) {
       return { transport: DEVICE_TRANSPORTS.UNREACHABLE, degraded: true, message: T.offline };

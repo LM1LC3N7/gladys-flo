@@ -53,8 +53,14 @@ up to date at the end of every milestone.
   fires nothing).
 - `valve.lastKnown` values in transit (`opening`? `closing`?) and how fast
   the device reports the new position (read back at 15 s and 60 s).
-- A 403 of the Flo API that is not CloudFront: a refused token (renewed once)
-  or something else.
+- A 403 of the Flo API that is not CloudFront no longer renews the token,
+  even on `users/{id}` (the account endpoint). To check on a real account: if
+  Flo answers 403 (not 401) for a revoked token, allow one renewal on a 403 of
+  the account endpoint only — `tokenMinAge` (60 s) still prevents a loop.
+- A passing 401 on one device with a recent token (under 60 s, so not
+  renewed) pauses that device for 1 h (it stays tracked, unreachable badge):
+  check how often Flo answers that, and shorten the pause if it happens with
+  valid tokens.
 - HTTP rate limits: none documented; watch for 429.
 
 ## Decisions

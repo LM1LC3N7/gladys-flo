@@ -70,6 +70,10 @@ export const T = {
     en: 'Flo reports this device offline.',
     fr: 'Flo signale cet appareil hors ligne.',
   },
+  forbidden: {
+    en: 'Flo refused to read this device: asked again within an hour (or with the test button).',
+    fr: "Flo a refusé la lecture de cet appareil : nouvel essai dans l'heure (ou avec le bouton de test).",
+  },
   noAlert: { en: 'none', fr: 'aucune' },
   denied: {
     modeOff: {

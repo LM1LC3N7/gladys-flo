@@ -346,7 +346,6 @@ test('a 403 on one device skips it for an hour, without any new sign-in', async 
   await advance(10);
   assert.equal(fake.made(/users\/auth/).length, 1, '0 more sign-in in 10 minutes');
   assert.equal(reads(), before + 1, 'asked once, then paused');
-  assert.equal(app.devices.has(SENSOR), false);
   assert.equal(app.devices.has(SHUTOFF), true);
   assert.equal(gladys.fake.connectionStatus.connected, true);
   await advance(52);
@@ -354,12 +353,36 @@ test('a 403 on one device skips it for an hour, without any new sign-in', async 
   assert.equal(fake.made(/users\/auth/).length, 1);
 });
 
+test('a paused device stays tracked: unreachable badge, alerts of its return fire', async () => {
+  const { gladys, app, advance } = await setup();
+  let refuse = true;
+  fake.route('GET', new RegExp(`devices/${SENSOR}$`), () =>
+    refuse ? json({ message: 'no' }, 403) : PASS,
+  );
+  await advance(2);
+  assert.equal(app.devices.has(SENSOR), true, 'still a known device');
+  assert.ok(app.seen.has(SENSOR), 'its seen state kept');
+  const badge = badgeOf(gladys, SENSOR);
+  assert.equal(badge.transport, DEVICE_TRANSPORTS.UNREACHABLE);
+  assert.equal(badge.degraded, true);
+  assert.match(badge.message.en, /refused to read this device/);
+  await advance(20);
+  assert.equal(app.devices.has(SENSOR), true);
+  // Water detected while paused: it fires when the device comes back.
+  fake.state.devices[SENSOR].fwProperties.telemetry_water = true;
+  refuse = false;
+  await advance(40);
+  const leaks = events(gladys).filter((e) => e.key === SCENE_TRIGGERS.LEAK);
+  assert.equal(leaks.length, 1);
+  assert.equal(leaks[0].data.source, 'sensor');
+  assert.equal(badgeOf(gladys, SENSOR).transport, DEVICE_TRANSPORTS.CLOUD);
+});
+
 test('a 401 on one device: one renewal, then the device is paused', async () => {
-  const { app, advance } = await setup();
+  const { advance } = await setup();
   fake.route('GET', new RegExp(`devices/${SENSOR}$`), () => json({ message: 'no' }, 401));
   await advance(10);
   assert.equal(fake.made(/users\/auth/).length, 2, 'one renewal, not one per refresh');
-  assert.equal(app.devices.has(SENSOR), false);
 });
 
 test('a token issued less than 60 s ago is never renewed on a 401', async () => {
