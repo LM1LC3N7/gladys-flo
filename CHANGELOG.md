@@ -23,7 +23,8 @@ the notes of the version's GitHub Release.
   Once seen closed, reopening the water in the Moen app is never fought.
 - A click sends the shutoff at once even during a pause Flo asked for (one
   request); a failed send is tried again after 15 seconds; a shutoff is let
-  go when Flo shows an opening asked after it (Moen app), never fought.
+  go, never fought, when Flo shows it took it (target closed) then an opening
+  asked since (Moen app), as the status says.
 - Opening the valve stays off by default; when allowed, it is refused within
   20 seconds of a shutoff of the same valve not yet seen closed, cancelled by
   a shutoff asked while it waits its turn, and an opening sent lets an older
@@ -42,12 +43,12 @@ the notes of the version's GitHub Release.
 
 ### Removed
 
-- The valve switch is no longer offered in Discovery. On a device added
-  before, it keeps working (your scenes still close the valve) but a "turn
-  everything off" could now shut the water off. **What to do**: in your
-  scenes, replace the valve switch with the "Shut the water off" button (or
-  the scene action "Flo: open or close the valve"), then run Discovery again
-  and save the device.
+- The valve switch is no longer offered for a device added from now on. A
+  device added before keeps it, even when saved again from Discovery: your
+  scenes still close the valve, but a "turn everything off" could now shut
+  the water off. **What to do**: in your scenes, replace the valve switch
+  with the "Shut the water off" button (or the scene action "Flo: open or close the valve"). To get rid of the switch,
+  delete the device in Gladys and add it again from Discovery.
 - The option "Allow closing the valve" (`allow_valve_close`): closing is
   always allowed. A configuration that still holds it keeps working, the
   value is ignored.

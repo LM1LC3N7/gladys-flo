@@ -931,14 +931,84 @@ test('a sign-in refused on the way of a shutoff is kept: no new try by itself', 
   assert.equal(app.keeper.entries.size, 1, 'kept');
 });
 
-test('a read after an accepted shutoff showing an opening asked: opened elsewhere, never fought', async () => {
+test('a shutoff Flo ignored (target still open) is kept and sent again', async () => {
   const { app, timers, clock } = await setup();
+  // The POST answers 200 but the valve and its target do not change.
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => json({}));
   await app.setValve(SHUTOFF, false);
-  // The Moen app opens it again before any read showed it closed.
+  assert.equal(fake.state.devices[SHUTOFF].valve.target, 'open');
+  await runAll(timers, clock);
+  assert.equal(app.keeper.entries.size, 1, 'kept: Flo never showed it took the shutoff');
+  assert.equal(closes().length, 2, 'sent again');
+});
+
+test('target closed then open after the send: opened elsewhere, let go, said in the status', async () => {
+  const { gladys, app, timers, clock } = await setup();
+  await app.setValve(SHUTOFF, false);
+  // Flo took the shutoff (target closed, the valve still moving)...
+  await app.read(SHUTOFF);
+  assert.equal(app.keeper.entries.size, 1);
+  // An offline device saying open proves nothing: kept.
   fake.state.devices[SHUTOFF].valve = { target: 'open', lastKnown: 'open' };
+  fake.state.devices[SHUTOFF].isConnected = false;
+  await app.read(SHUTOFF);
+  assert.equal(app.keeper.entries.size, 1);
+  // ...then online: the Moen app asked to open it again.
+  fake.state.devices[SHUTOFF].isConnected = true;
   await runAll(timers, clock);
   assert.equal(app.keeper.entries.size, 0);
   assert.equal(closes().length, 1, 'never sent again');
+  assert.match(
+    gladys.fake.connectionStatus.message.fr,
+    /Coupure lâchée : la vanne a été rouverte ailleurs après elle \(application Moen\) : Smart Water Shutoff/,
+  );
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /Shutoff let go: the valve was opened elsewhere/,
+  );
+});
+
+test('a device created before 0.1.3 keeps its valve switch when published again', async () => {
+  const { gladys, advance } = await setup();
+  const old = structuredClone(deviceOf(gladys, SHUTOFF));
+  old.features.push({ ...old.features[0], external_id: `${dev(SHUTOFF)}:valve` });
+  await gladys.fake.deviceCreated(old);
+  gladys.devices = gladys.devices.map((d) => (d.external_id === old.external_id ? old : d));
+  await advance(2);
+  const valve = deviceOf(gladys, SHUTOFF).features.find(
+    (f) => f.external_id === `${dev(SHUTOFF)}:valve`,
+  );
+  assert.ok(valve, 'still offered: saving it again loses nothing');
+  assert.deepEqual([valve.category, valve.type, valve.read_only], ['switch', 'binary', false]);
+});
+
+test('a shutoff clicked while the configuration is missing is kept in /data', async () => {
+  const data = dataDir();
+  const clock = { now: NOW };
+  fake = installFlo(clock);
+  const gladys = createFakeGladys({ selector: 'flo', config: {} });
+  const timers = createFakeTimers();
+  const app = new FloApp({
+    gladys,
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    now: () => clock.now,
+    monotonic: () => clock.now,
+    timers,
+    dataDir: data,
+  });
+  apps.push(app);
+  await app.connectedWith(
+    () => undefined,
+    async () => {
+      throw new Error('HTTP 500');
+    },
+  );
+  await app.setValve(SHUTOFF, false);
+  await app.keeper.saving;
+  assert.deepEqual(
+    keptFile(data).map((e) => e.id),
+    [SHUTOFF],
+  );
 });
 
 test('an opening: the option unchecked during its read, nothing sent', async () => {

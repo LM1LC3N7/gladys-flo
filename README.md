@@ -39,7 +39,7 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (FloApp) ⇄ src/flo/client.js
 - **Devices**: `ext:<selector>:flo:<deviceId>`, the Flo device id. Shutoff
   (`flo_device_v2`): water buttons (`water_close`, `water_open`), valve open
   (`valve_open`, read only; the `valve` switch of 0.1.0-0.1.2 is still
-  understood and updated where created, no longer in Discovery), away switch, mode text, flow (m³/h), pressure
+  understood and updated where created, offered only to a device that has it), away switch, mode text, flow (m³/h), pressure
   (psi), water temperature (°C, probe), today's use (L), leak alert (leak
   family only), pending alerts (text). Water Sensor (`puck_oem`): leak,
   temperature, humidity, battery. Others are skipped. Readings are numbered:

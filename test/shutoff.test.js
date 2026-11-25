@@ -294,21 +294,29 @@ test('/data never written before it was read; the file read is merged', async ()
   );
 });
 
-test('a read after an accepted send showing an opening asked: let go, never fought', async () => {
-  const { keeper, flo } = keeperOf();
-  flo.fail = 'unavailable';
+test('opened elsewhere only on a target closed then open, both read after a send', async () => {
+  const { keeper } = keeperOf();
   await keeper.click('v1', 'Valve');
-  keeper.observeOpened('v1', keeper.ticket());
-  assert.equal(keeper.entries.size, 1, 'never accepted: kept');
-  flo.fail = undefined;
-  keeper.fireAll();
-  keeper.entries.get('v1').lastSent = -Infinity;
-  keeper.fireAll();
-  await keeper.entries.get('v1').inFlight;
-  keeper.observeOpened('v1', keeper.entries.get('v1').doneTicket - 1);
-  assert.equal(keeper.entries.size, 1, 'a read started before: kept');
-  keeper.observeOpened('v1', keeper.ticket());
+  const entry = keeper.entries.get('v1');
+  // A read started before the send ended: ignored, even closed then open.
+  keeper.observeTarget('v1', 'closed', entry.doneTicket - 1);
+  keeper.observeTarget('v1', 'open', keeper.ticket());
+  assert.equal(keeper.entries.size, 1, 'open without the proof: kept');
+  keeper.observeTarget('v1', 'closed', keeper.ticket());
+  assert.equal(keeper.entries.size, 1);
+  keeper.observeTarget('v1', 'open', keeper.ticket());
   assert.equal(keeper.entries.size, 0);
+  assert.deepEqual(keeper.summary().openedElsewhere, ['Valve']);
+  // The proof is per click: a new click on a kept shutoff needs it again.
+  await keeper.click('v2', 'Other');
+  keeper.observeTarget('v2', 'closed', keeper.ticket());
+  await keeper.click('v2', 'Other');
+  keeper.observeTarget('v2', 'open', keeper.ticket());
+  assert.equal(keeper.entries.has('v2'), true, 'kept: no proof since the new click');
+  // A new click: no longer said.
+  await keeper.click('v1', 'Valve');
+  assert.deepEqual(keeper.summary().openedElsewhere, []);
+  assert.equal(keeper.entries.get('v1').targetClosedSeen, false, 'the proof is per click');
 });
 
 test('a click while its send is in flight: one request, not two', async () => {

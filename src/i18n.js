@@ -77,6 +77,10 @@ export const T = {
     en: ` ${n === 1 ? '1 shutoff kept' : `${n} shutoffs kept`} until Flo shows the valve closed${held ? ` (${held} held: sent again every 15 min)` : ''}; given up 24 h after it first left.`,
     fr: ` ${n === 1 ? '1 coupure gardée' : `${n} coupures gardées`} jusqu'à ce que Flo montre la vanne fermée${held ? ` (${held} retenue${held > 1 ? 's' : ''} : renvoyée${held > 1 ? 's' : ''} toutes les 15 min)` : ''} ; abandon 24 h après le premier envoi.`,
   }),
+  shutoffsOpenedElsewhere: (names) => ({
+    en: ` Shutoff let go: the valve was opened elsewhere after it (Moen app): ${names}.`,
+    fr: ` Coupure lâchée : la vanne a été rouverte ailleurs après elle (application Moen) : ${names}.`,
+  }),
   shutoffsGivenUp: (names) => ({
     en: ` Shutoff given up after 24 h without Flo showing the valve closed: ${names}.`,
     fr: ` Coupure abandonnée après 24 h sans que Flo montre la vanne fermée : ${names}.`,

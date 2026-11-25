@@ -43,6 +43,12 @@ up to date at the end of every milestone.
 
 ## To check on a real account
 
+- **`valve.target` right after an accepted POST** (online and offline): does
+  Flo set it to `closed` at once? A shutoff is let go as "opened elsewhere"
+  only on a target `closed` then `open` in reads after the send; if Flo
+  never shows `closed` in `target`, that let-go never happens (the shutoff is
+  then confirmed by `lastKnown`, or held 24 h).
+
 - Which sign-in a 2026 account accepts: the legacy `users/auth` (aioflo says
   it still works) or only the Moen SSO; the exact error status of a wrong
   password on each.

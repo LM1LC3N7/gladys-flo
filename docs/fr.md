@@ -65,9 +65,11 @@ appareil ajouté avant la 0.1.3 mis à 0) :
   toujours pas la vanne fermée, ce que dit le statut de l'intégration ; aussi
   quand l'appareil est supprimé dans Gladys ou que Flo ne le connaît plus
   (deux réponses de suite) ;
-- une fois vue fermée, ou dès que Flo montre une ouverture demandée après
-  elle (application Moen), c'est terminé : rouvrir l'eau ailleurs n'est
-  jamais contré.
+- une fois vue fermée, ou dès que Flo, après avoir montré qu'il a pris la
+  coupure (cible fermée), montre une ouverture demandée depuis (application
+  Moen ; dit dans le statut), c'est terminé : rouvrir l'eau ailleurs n'est
+  jamais contré. Une coupure dont Flo n'a pas montré la prise est gardée et
+  renvoyée.
 
 Si la coupure n'a pas pu partir chez Flo dans le temps que Gladys attend
 (3,5 secondes depuis le tableau de bord), Gladys affiche un message disant
@@ -104,12 +106,13 @@ Même autorisée, une ouverture :
 **Les commandes de l'eau sont des boutons**, jamais un interrupteur : un
 assistant vocal, une commande « tout éteindre » ou une scène qui agit sur
 tous les interrupteurs ne les atteint pas. Depuis la 0.1.3, l'interrupteur de
-vanne n'est plus proposé en Découverte ; sur un appareil ajouté avant, il
-fonctionne toujours (une scène « fuite → vanne à 0 » protège encore) mais un
-« tout éteindre » peut l'atteindre. **À faire** : dans vos scènes, remplacez
-l'interrupteur de vanne par le bouton **Couper l'eau** (ou l'action de scène
-« Flo : ouvrir ou fermer la vanne »), puis relancez la Découverte et
-enregistrez l'appareil pour que l'interrupteur disparaisse.
+vanne n'est plus proposé pour un appareil ajouté désormais ; un appareil
+ajouté avant le garde, même enregistré de nouveau depuis la Découverte (une
+scène « fuite → vanne à 0 » protège encore), mais un « tout éteindre » peut
+l'atteindre. **À faire** : dans vos scènes, remplacez l'interrupteur de vanne
+par le bouton **Couper l'eau** (ou l'action de scène « Flo : ouvrir ou fermer la vanne »). Pour retirer l'interrupteur,
+supprimez l'appareil dans Gladys puis ajoutez-le de nouveau depuis la
+Découverte.
 
 **Mode Maison / Absent** (interrupteur « Mode absent » ou action de scène) :
 désactivé par défaut. **Passer en Maison désarme la coupure automatique que

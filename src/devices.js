@@ -34,7 +34,7 @@ const button = {
 export const FEATURES = {
   // Shutoff
   // The valve switch of 0.1.0-0.1.2: still understood (scenes made with it)
-  // and still updated where created, no longer offered in Discovery.
+  // and still updated where created, offered only to a device that has it.
   valve: { category: C.SWITCH, type: TY.SWITCH.BINARY, ...binary, ...command },
   valve_open: { category: C.UNKNOWN, type: TY.SENSOR.BINARY, ...binary },
   water_close: button,
@@ -133,6 +133,18 @@ function params(entries) {
   return entries
     .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
     .map(([name, value]) => ({ name, value: String(value) }));
+}
+
+/** The valve switch of 0.1.0-0.1.2, for a device that already has it (never a new one). */
+export function legacyValveFeature(gladys, device, language) {
+  return {
+    name: word(FEATURE_NAMES.valve, language),
+    external_id: deviceIds(gladys, device.id).feature('valve'),
+    read_only: true,
+    has_feedback: false,
+    keep_history: true,
+    ...FEATURES.valve,
+  };
 }
 
 /** The Gladys device of one Flo device (`reading` of src/flo/model.js). */

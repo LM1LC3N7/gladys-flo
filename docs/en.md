@@ -61,8 +61,10 @@ action "close", or the valve switch of a device added before 0.1.3 set to 0):
 - is **given up 24 hours after it first left** without Flo showing the valve
   closed, said in the integration status; also when the device is deleted
   in Gladys or Flo no longer knows it (two answers in a row);
-- once seen closed, or once Flo shows an opening asked after it (the Moen
-  app), it is done: reopening the water elsewhere is never fought.
+- once seen closed, or once Flo, after showing it took the shutoff (target
+  closed), shows an opening asked since (the Moen app; said in the status),
+  it is done: reopening the water elsewhere is never fought. A shutoff Flo
+  did not show it took is kept and sent again.
 
 If the shutoff could not reach Flo within the time Gladys waits (3.5 seconds
 from the dashboard), Gladys shows a message saying that it is kept and sent
@@ -96,12 +98,12 @@ Even allowed, an opening:
 
 **The water commands are buttons**, never a switch: a voice assistant, a
 "turn everything off" command or a scene acting on every switch never
-reaches them. Since 0.1.3 the valve switch is no longer offered in
-Discovery; on a device added before, it still works (a scene "leak → valve
-to 0" keeps protecting) but it can be reached by a "turn everything off".
-**What to do**: in your scenes, replace the valve switch with the **Shut the
-water off** button (or the scene action "Flo: open or close the valve"),
-then run Discovery again and save the device so that the switch goes away.
+reaches them. Since 0.1.3 the valve switch is no longer offered for a device
+added from now on; a device added before keeps it, even when saved again
+from Discovery (a scene "leak → valve to 0" keeps protecting), but it can be
+reached by a "turn everything off". **What to do**: in your scenes, replace
+the valve switch with the **Shut the water off** button (or the scene action "Flo: open or close the valve"). To get rid
+of the switch, delete the device in Gladys and add it again from Discovery.
 
 **Home / Away mode** (the "Away mode" switch or a scene action): off by
 default. **Switching to Home disarms the automatic shutoff Flo applies in

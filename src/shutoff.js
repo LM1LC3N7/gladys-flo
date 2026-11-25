@@ -18,9 +18,10 @@
 // It is given up `expiry` after it first left in this process (monotonic
 // clock, said in the status), when Flo does not know the device (a 404 on
 // the send, then on the read), when the device is deleted in Gladys, or let
-// go by an opening sent after it, or made elsewhere after a send Flo
-// accepted. Once seen closed it is done: an opening made later elsewhere
-// (the Moen app) is never fought.
+// go by an opening sent after it, or made elsewhere: a target `closed` then
+// `open` in readings made after a send (Flo took the shutoff, then someone
+// asked to open; said in the status). Once seen closed it is done: an
+// opening made later elsewhere (the Moen app) is never fought.
 //
 // /data is never written before it was read (the list read is merged with
 // the shutoffs clicked meanwhile): a file that cannot be read is never lost.
@@ -63,6 +64,8 @@ export class ShutoffKeeper {
     this.clicks = new Map();
     /** Names of the shutoffs given up after `expiry`, newest first (status). */
     this.givenUp = [];
+    /** Names of the shutoffs let go by an opening made elsewhere, newest first (status). */
+    this.openedElsewhere = [];
     this.seq = 0;
     this.stopped = false;
     /** A shutoff could not leave (account refused, not read yet): fireAll() once it works. */
@@ -127,8 +130,8 @@ export class ShutoffKeeper {
       timer: undefined,
       /** The error of the last send, if it failed. */
       lastError: undefined,
-      /** A send since the click was accepted by the cloud. */
-      accepted: false,
+      /** A reading after a send showed the target `closed`: Flo took the shutoff. */
+      targetClosedSeen: false,
     };
   }
 
@@ -144,6 +147,7 @@ export class ShutoffKeeper {
     this.forgotten.delete(id);
     this.clicks.set(id, this.clickCount(id) + 1);
     this.givenUp = this.givenUp.filter((n) => n !== name);
+    this.openedElsewhere = this.openedElsewhere.filter((n) => n !== name);
     let entry = this.entries.get(id);
     if (!entry) {
       entry = this.newEntry(id, name, this.wallNow(), this.monotonic());
@@ -155,7 +159,7 @@ export class ShutoffKeeper {
       clickedAt: this.monotonic(),
       budget: this.timings.resends,
       held: false,
-      accepted: false,
+      targetClosedSeen: false,
       // A new click: its 24 h count from its own first send.
       firstSent: undefined,
     });
@@ -219,7 +223,6 @@ export class ShutoffKeeper {
       try {
         await this.send(entry);
         entry.lastError = undefined;
-        entry.accepted = true;
         this.logger.info(`${entry.name}: shutoff sent (${entry.sends})`);
         return 'sent';
       } catch (err) {
@@ -327,12 +330,24 @@ export class ShutoffKeeper {
   }
 
   /**
-   * A reading started after a send the cloud accepted shows an opening
-   * asked since (made elsewhere, the app of the maker): never fought.
+   * The target of the valve in a reading started at `ticket`. After a send:
+   * `closed` proves the cloud took the shutoff; `open` after that is an
+   * opening asked elsewhere (the app of the maker): never fought, said in
+   * the status. `open` without that proof (a send the cloud ignored, an
+   * answer not up to date) keeps the shutoff.
    */
-  observeOpened(id, ticket) {
+  observeTarget(id, target, ticket) {
     const entry = this.entries.get(String(id));
-    if (entry && entry.accepted && ticket > entry.doneTicket) {
+    if (!entry || !(ticket > entry.doneTicket)) {
+      return;
+    }
+    if (target === 'closed') {
+      entry.targetClosedSeen = true;
+    } else if (target === 'open' && entry.targetClosedSeen) {
+      this.openedElsewhere = [
+        entry.name,
+        ...this.openedElsewhere.filter((n) => n !== entry.name),
+      ].slice(0, 3);
       this.letGo(entry.id, 'let go: the valve was opened elsewhere after it');
     }
   }
@@ -380,6 +395,7 @@ export class ShutoffKeeper {
       kept: entries.length,
       held: entries.filter((e) => e.held).length,
       givenUp: [...this.givenUp],
+      openedElsewhere: [...this.openedElsewhere],
     };
   }
 }

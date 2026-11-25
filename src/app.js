@@ -30,6 +30,7 @@ import { MODES, TIMINGS, VALVE } from './constants.js';
 import {
   COMMAND_ROLES,
   buildDevice,
+  legacyValveFeature,
   deviceIds,
   deviceName,
   parseExternalId,
@@ -243,6 +244,8 @@ export class FloApp {
   async connectedWith(current, fetch, attempt = 0) {
     this.timers.clearTimeout(this.configTimer);
     this.configTimer = undefined;
+    // /data first: a shutoff clicked while the configuration is missing is kept there too.
+    await this.loadShutoffs();
     let config = current();
     if (!config || typeof config !== 'object') {
       try {
@@ -344,16 +347,20 @@ export class FloApp {
   }
 
   withShutoffs(message) {
-    const { kept, held, givenUp } = this.keeper.summary();
-    if (kept === 0 && givenUp.length === 0) {
+    const { kept, held, givenUp, openedElsewhere } = this.keeper.summary();
+    if (kept === 0 && givenUp.length === 0 && openedElsewhere.length === 0) {
       return message;
     }
     const base = message ?? { en: '', fr: '' };
     const kept_ = kept > 0 ? T.shutoffsKept(kept, held) : { en: '', fr: '' };
     const lost = givenUp.length > 0 ? T.shutoffsGivenUp(givenUp.join(', ')) : { en: '', fr: '' };
+    const opened =
+      openedElsewhere.length > 0
+        ? T.shutoffsOpenedElsewhere(openedElsewhere.join(', '))
+        : { en: '', fr: '' };
     return {
-      en: `${base.en}${kept_.en}${lost.en}`.trim(),
-      fr: `${base.fr}${kept_.fr}${lost.fr}`.trim(),
+      en: `${base.en}${kept_.en}${lost.en}${opened.en}`.trim(),
+      fr: `${base.fr}${kept_.fr}${lost.fr}${opened.fr}`.trim(),
     };
   }
 
@@ -505,9 +512,9 @@ export class FloApp {
         reading.connected === true && reading.valve === VALVE.CLOSED,
         ticket,
       );
-      if (reading.connected === true && reading.valveTarget === VALVE.OPEN) {
-        // Asked open after a shutoff Flo accepted: opened elsewhere (Moen app).
-        this.keeper.observeOpened(String(id), ticket);
+      if (reading.connected === true) {
+        // closed then open after a send: opened elsewhere (Moen app).
+        this.keeper.observeTarget(String(id), reading.valveTarget, ticket);
       }
     } else if (reading.kind === 'sensor' || (reading.kind === 'other' && reading.type)) {
       // A device Flo names as another kind; an answer without a type is not one.
@@ -654,14 +661,22 @@ export class FloApp {
     if (this.readAt === undefined) {
       return;
     }
-    const devices = [...this.devices.values()].map((d) =>
-      buildDevice(
+    const created = this.createdFeatures();
+    const devices = [...this.devices.values()].map((d) => {
+      const device = buildDevice(
         this.gladys,
         d,
         this.config.language,
         this.locations.get(d.locationId ?? this.locationOf.get(d.id))?.name,
-      ),
-    );
+      );
+      // A device created before 0.1.3 keeps its valve switch when saved again
+      // from Discovery: its scenes keep working (republication loses nothing).
+      const legacy = deviceIds(this.gladys, d.id).feature('valve');
+      if (d.kind === 'shutoff' && created.has(legacy)) {
+        device.features.push(legacyValveFeature(this.gladys, d, this.config.language));
+      }
+      return device;
+    });
     const json = JSON.stringify(devices);
     if (json === this.published) {
       return;
