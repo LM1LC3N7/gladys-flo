@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
 ### Changed
 
 - **Closing the valve (shutting the water off) is never refused any more and
@@ -82,6 +84,7 @@ the notes of the version's GitHub Release.
 - "Test the connection" button with a summary of the account.
 - Feature names in French or English.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-flo/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-flo/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/LM1LC3N7/gladys-flo/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/LM1LC3N7/gladys-flo/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-flo/releases/tag/v0.1.1
