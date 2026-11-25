@@ -37,7 +37,9 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (FloApp) ⇄ src/flo/client.js
   10 then 15 minutes; a 429 pauses for its Retry-After (1 min to 1 h); a
   CloudFront 403 is a passing error, not a refusal.
 - **Devices**: `ext:<selector>:flo:<deviceId>`, the Flo device id. Shutoff
-  (`flo_device_v2`): valve and away switches, mode text, flow (m³/h), pressure
+  (`flo_device_v2`): water buttons (`water_close`, `water_open`), valve open
+  (`valve_open`, read only; the `valve` switch of 0.1.0-0.1.2 is still
+  understood and updated where created, no longer in Discovery), away switch, mode text, flow (m³/h), pressure
   (psi), water temperature (°C, probe), today's use (L), leak alert (leak
   family only), pending alerts (text). Water Sensor (`puck_oem`): leak,
   temperature, humidity, battery. Others are skipped. Readings are numbered:
@@ -50,7 +52,7 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (FloApp) ⇄ src/flo/client.js
   after a failure, waits for a 429 pause, given up 24 h after its first send
   (monotonic, in the status). Opening behind `allow_valve_open` (off), one at
   a time per device, the device read again just before (refused when
-  offline, moving, unknown or unreadable), refused within 20 s of a shutoff
+  offline, moving, unknown or unreadable), refused within 20 s of a shutoff still kept
   or after a shutoff clicked since, refused if not sent within 3.5 s of a
   set_value (25 s for a scene action); an opening sent lets the shutoff go.
   Read back 15 s and 60 s later (after a failure too).

@@ -14,10 +14,10 @@ Canada. Non officielle, sans lien avec Moen ni Fortune Brands.
 
 ## Ce que vous obtenez
 
-| Appareil Flo                      | Dans Gladys                                                                                                                                                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Smart Water Shutoff (vanne)       | vanne ouverte/fermée et mode absent (commandables, voir « Sécurité »), mode (texte : home, away, sleep), débit m³/h, pression psi, température de l'eau °C, consommation du jour en litres, alerte fuite, alertes en attente (texte) |
-| Water Sensor (détecteur de fuite) | fuite d'eau, température °C, humidité %, batterie %                                                                                                                                                                                  |
+| Appareil Flo                      | Dans Gladys                                                                                                                                                                                                                                                                                   |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Smart Water Shutoff (vanne)       | boutons **Couper l'eau** et **Ouvrir l'eau**, vanne ouverte (0/1, lecture seule), mode absent (commandable, voir « Sécurité »), mode (texte : home, away, sleep), débit m³/h, pression psi, température de l'eau °C, consommation du jour en litres, alerte fuite, alertes en attente (texte) |
+| Water Sensor (détecteur de fuite) | fuite d'eau, température °C, humidité %, batterie %                                                                                                                                                                                                                                           |
 
 Les autres appareils Flo (pont, etc.) sont ignorés : le bouton **Tester la
 connexion** les compte.
@@ -45,23 +45,29 @@ l'autre.
 ## Sécurité : fermeture toujours permise, le reste désactivé par défaut
 
 **Fermer la vanne coupe l'eau : c'est une protection, elle n'est jamais
-refusée et ne demande aucune option.** Une coupure (l'interrupteur de vanne
-mis à 0, ou l'action de scène « fermer ») :
+refusée et ne demande aucune option.** Une coupure (le bouton **Couper
+l'eau**, l'action de scène « fermer », ou l'interrupteur de vanne d'un
+appareil ajouté avant la 0.1.3 mis à 0) :
 
-- part tout de suite, sans attendre une autre commande de la vanne ; une
-  ouverture qui attend encore son tour est annulée ;
+- part tout de suite, sans attendre une autre commande de la vanne, même
+  pendant une pause demandée par Flo (une requête ; un second clic dans la
+  minute attend la fin de la pause) ; une ouverture qui attend encore son
+  tour est annulée ;
 - est **gardée jusqu'à ce que Flo montre la vanne fermée** par une lecture
   faite après son envoi (appareil en ligne). D'ici là elle est renvoyée : la
   vanne est relue 90 secondes après chaque envoi et la coupure renvoyée si
   elle n'est pas fermée, 3 fois, puis toutes les 15 minutes ; aussi après un
   redémarrage de l'intégration (elle est gardée dans ses données) et quand
-  Flo répond de nouveau après une panne. Elle attend la pause que Flo demande
-  (trop de requêtes) et de nouveaux identifiants quand Flo les refuse ;
+  Flo répond de nouveau après une panne ; un envoi en échec est réessayé
+  après 15 secondes. Les renvois attendent la pause que Flo demande (trop de
+  requêtes) et de nouveaux identifiants quand Flo les refuse ;
 - est **abandonnée 24 heures après son premier envoi** si Flo ne montre
   toujours pas la vanne fermée, ce que dit le statut de l'intégration ; aussi
-  quand l'appareil est supprimé dans Gladys ou que Flo ne le connaît plus ;
-- une fois vue fermée, c'est terminé : rouvrir l'eau plus tard dans
-  l'application Moen n'est jamais contré.
+  quand l'appareil est supprimé dans Gladys ou que Flo ne le connaît plus
+  (deux réponses de suite) ;
+- une fois vue fermée, ou dès que Flo montre une ouverture demandée après
+  elle (application Moen), c'est terminé : rouvrir l'eau ailleurs n'est
+  jamais contré.
 
 Si la coupure n'a pas pu partir chez Flo dans le temps que Gladys attend
 (3,5 secondes depuis le tableau de bord), Gladys affiche un message disant
@@ -83,8 +89,9 @@ Même autorisée, une ouverture :
   si l'appareil est hors ligne, si la vanne bouge ou est dans un état
   inconnu, l'ouverture est **refusée** ; l'état gardé en mémoire ne décide
   jamais ;
-- est refusée dans les 20 secondes qui suivent une coupure de la même vanne,
-  et annulée si une coupure est demandée pendant qu'elle attend son tour ;
+- est refusée dans les 20 secondes qui suivent une coupure de la même vanne
+  pas encore vue fermée, et annulée si une coupure est demandée pendant
+  qu'elle attend son tour ;
 - n'envoie rien si la vanne est déjà ouverte, ou s'ouvre déjà ;
 - est **refusée plutôt qu'envoyée en retard** si elle n'a pas pu partir à
   temps (3,5 secondes après la demande depuis le tableau de bord, 25 secondes
@@ -94,10 +101,15 @@ Même autorisée, une ouverture :
 - relit l'appareil 15 secondes puis 60 secondes après (même en cas d'échec),
   pour afficher la position réelle.
 
-**Attention : la vanne est un interrupteur Gladys comme un autre.** Un
+**Les commandes de l'eau sont des boutons**, jamais un interrupteur : un
 assistant vocal, une commande « tout éteindre » ou une scène qui agit sur
-tous les interrupteurs peut couper l'eau (toujours permis), et l'ouvrir une
-fois l'option activée. Vérifiez vos scènes et vos assistants.
+tous les interrupteurs ne les atteint pas. Depuis la 0.1.3, l'interrupteur de
+vanne n'est plus proposé en Découverte ; sur un appareil ajouté avant, il
+fonctionne toujours (une scène « fuite → vanne à 0 » protège encore) mais un
+« tout éteindre » peut l'atteindre. **À faire** : dans vos scènes, remplacez
+l'interrupteur de vanne par le bouton **Couper l'eau** (ou l'action de scène
+« Flo : ouvrir ou fermer la vanne »), puis relancez la Découverte et
+enregistrez l'appareil pour que l'interrupteur disparaisse.
 
 **Mode Maison / Absent** (interrupteur « Mode absent » ou action de scène) :
 désactivé par défaut. **Passer en Maison désarme la coupure automatique que

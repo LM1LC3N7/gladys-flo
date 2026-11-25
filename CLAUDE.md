@@ -17,7 +17,9 @@ ported to JavaScript. Decisions and open questions live in `TODO.md`.
 
 **Valve safety is not negotiable**: closing the valve shuts the water off
 and is never refused (no option, decision of 2026-11-25): kept and sent again
-until a later read shows it closed, 24 h at most (src/shutoff.js).
+until a later read shows it closed, 24 h at most (src/shutoff.js). The
+water commands are buttons (`water_close`, `water_open`), never a switch;
+the `valve` switch of 0.1.0-0.1.2 stays understood, not offered.
 `allow_valve_open` stays off by default; an opening is serialized per device,
 decided on the state read from Flo just before (never on the state in
 memory), and refused when that state is unknown, moving or offline, or when a

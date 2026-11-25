@@ -35,15 +35,6 @@ up to date at the end of every milestone.
 
 ## Next patch
 
-- **`getConfig()` failing in `connected`** (seen at the shutoff patch,
-  2026-11-25, existing before it): the handler logs "Start failed" and never
-  tries again, so the integration stays without credentials until the next
-  reconnection; a shutoff clicked meanwhile is kept but cannot leave. Retry
-  spaced without end, exact status, a test that fails it once.
-- **The valve is a `switch`/`binary` feature**: a "turn everything off" can
-  now shut the water off without any option (said in the docs). A dedicated
-  type would change the feature keys (external ids are forever): Louis's
-  call.
 - **The 24 h of a kept shutoff count per process** (monotonic clock, model
   gladys-drop): a restart before the shutoff is seen closed starts them
   again from its next send.

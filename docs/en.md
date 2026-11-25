@@ -13,10 +13,10 @@ with Moen or Fortune Brands.
 
 ## What you get
 
-| Flo device                  | In Gladys                                                                                                                                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Smart Water Shutoff (valve) | valve open/closed and away mode (settable, see "Safety"), mode (text: home, away, sleep), flow m³/h, pressure psi, water temperature °C, today's use in litres, leak alert, pending alerts (text) |
-| Water Sensor (leak sensor)  | water leak, temperature °C, humidity %, battery %                                                                                                                                                 |
+| Flo device                  | In Gladys                                                                                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Smart Water Shutoff (valve) | buttons **Shut the water off** and **Turn the water on**, valve open (0/1, read only), away mode (settable, see "Safety"), mode (text: home, away, sleep), flow m³/h, pressure psi, water temperature °C, today's use in litres, leak alert, pending alerts (text) |
+| Water Sensor (leak sensor)  | water leak, temperature °C, humidity %, battery %                                                                                                                                                                                                                  |
 
 Other Flo devices (bridge…) are skipped: the **Test the connection** button
 counts them.
@@ -43,23 +43,26 @@ changes. You can force either.
 ## Safety: closing always allowed, the rest off by default
 
 **Closing the valve shuts the water off: it protects, so it is never refused
-and needs no option.** A shutoff (the valve switch set to 0, or the scene
-action "close"):
+and needs no option.** A shutoff (the **Shut the water off** button, the scene
+action "close", or the valve switch of a device added before 0.1.3 set to 0):
 
-- leaves at once, without waiting for another command of the valve; an
-  opening still waiting its turn is cancelled;
+- leaves at once, without waiting for another command of the valve, even
+  during a pause Flo asked for (one request; a second click within a minute
+  waits for the end of the pause); an opening still waiting its turn is
+  cancelled;
 - is **kept until Flo shows the valve closed** by a reading made after it was
   sent (device online). Until then it is sent again: the valve is read again
   90 seconds after each send and the shutoff sent again if it is not closed,
   3 times, then every 15 minutes; also after a restart of the integration
-  (it is kept in its data) and when Flo answers again after an outage. It
-  waits for the pause Flo asks for (too many requests) and for new
-  credentials when Flo refuses them;
+  (it is kept in its data) and when Flo answers again after an outage; a send
+  that failed is tried again after 15 seconds. The resends wait for the pause
+  Flo asks for (too many requests) and for new credentials when Flo refuses
+  them;
 - is **given up 24 hours after it first left** without Flo showing the valve
   closed, said in the integration status; also when the device is deleted
-  in Gladys or Flo no longer knows it;
-- once seen closed, it is done: reopening the water in the Moen app later is
-  never fought.
+  in Gladys or Flo no longer knows it (two answers in a row);
+- once seen closed, or once Flo shows an opening asked after it (the Moen
+  app), it is done: reopening the water elsewhere is never fought.
 
 If the shutoff could not reach Flo within the time Gladys waits (3.5 seconds
 from the dashboard), Gladys shows a message saying that it is kept and sent
@@ -79,8 +82,9 @@ Even allowed, an opening:
 - reads the device from Flo **just before acting**: if that read fails, the
   device is offline, or the valve is moving or in an unknown state, the
   opening is **refused**; the state kept in memory never decides;
-- is refused within 20 seconds of a shutoff of the same valve, and cancelled
-  when a shutoff is asked while it waits its turn;
+- is refused within 20 seconds of a shutoff of the same valve still waiting
+  to be seen closed, and cancelled when a shutoff is asked while it waits
+  its turn;
 - sends nothing when the valve is already open, or already opening;
 - is **refused rather than sent late** when it could not leave in time (3.5
   seconds after the request from the dashboard, 25 seconds for a scene
@@ -90,10 +94,14 @@ Even allowed, an opening:
 - reads the device again 15 seconds and 60 seconds later (even after a
   failure), to show the real position.
 
-**Warning: the valve is a Gladys switch like any other.** A voice assistant,
-a "turn everything off" command or a scene acting on every switch can shut
-the water off (always allowed), and open it once that option is on. Check
-your scenes and assistants.
+**The water commands are buttons**, never a switch: a voice assistant, a
+"turn everything off" command or a scene acting on every switch never
+reaches them. Since 0.1.3 the valve switch is no longer offered in
+Discovery; on a device added before, it still works (a scene "leak → valve
+to 0" keeps protecting) but it can be reached by a "turn everything off".
+**What to do**: in your scenes, replace the valve switch with the **Shut the
+water off** button (or the scene action "Flo: open or close the valve"),
+then run Discovery again and save the device so that the switch goes away.
 
 **Home / Away mode** (the "Away mode" switch or a scene action): off by
 default. **Switching to Home disarms the automatic shutoff Flo applies in

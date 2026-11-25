@@ -132,8 +132,12 @@ export const TIMINGS = {
    * given up `shutoffExpiry` after it first left. At most one request of a
    * kept shutoff in flight per device: no storm, whatever happens.
    */
+  /** The configuration missing at a connection: asked again after these delays. */
+  configRetry: [10_000, 30_000, 60_000, 5 * 60_000],
   shutoff: {
     check: 90_000,
+    /** After a send that failed (network, 5xx): checked sooner. */
+    retry: 15_000,
     resends: 3,
     heldEvery: 15 * 60_000,
     expiry: 24 * 60 * 60_000,

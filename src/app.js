@@ -27,7 +27,14 @@
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './config.js';
 import { MODES, TIMINGS, VALVE } from './constants.js';
-import { buildDevice, deviceIds, deviceName, parseExternalId, statesOf } from './devices.js';
+import {
+  COMMAND_ROLES,
+  buildDevice,
+  deviceIds,
+  deviceName,
+  parseExternalId,
+  statesOf,
+} from './devices.js';
 import { FloClient } from './flo/client.js';
 import {
   catalogOf,
@@ -74,9 +81,9 @@ export class FloApp {
     /** false while /data could not be read: the kept shutoffs are read again at each tick. */
     this.shutoffsLoaded = false;
     this.keeper = new ShutoffKeeper({
-      send: (entry) => this.sendShutoff(entry),
-      read: (entry) => this.read(entry.id),
-      ready: () => this.shutoffReady(),
+      send: (entry) => this.refusedSeen(this.sendShutoff(entry)),
+      read: (entry) => this.refusedSeen(this.read(entry.id)),
+      ready: (entry) => this.shutoffReady(entry),
       save: (list) => saveShutoffs(this.dataDir, list),
       onChange: () => this.statusAgain(),
       onRateLimited: (err) => this.rateLimited(err),
@@ -185,7 +192,8 @@ export class FloApp {
       this.logger.warn(`Reading the shutoffs kept in ${this.dataDir} failed: ${error.message}`);
     }
     this.shutoffsLoaded = ok;
-    this.keeper.restore(list);
+    // Merged with the shutoffs clicked meanwhile; /data written only once read.
+    this.keeper.restore(list, { ok });
     if (list.length > 0) {
       this.statusAgain();
     }
@@ -193,8 +201,11 @@ export class FloApp {
 
   /** Can a shutoff leave now: never with refused credentials, after the pause Flo asked. */
   shutoffReady() {
-    if (!this.client.hasCredentials || this.refused) {
-      return { blocked: true };
+    if (!this.client.hasCredentials) {
+      return { blocked: 'noCredentials' };
+    }
+    if (this.refused) {
+      return { blocked: 'refused' };
     }
     // Bounded: a wall clock set back never holds a shutoff longer than the longest pause.
     const wait = Math.min(this.pausedUntil - this.now(), TIMINGS.rateLimitMax);
@@ -212,6 +223,47 @@ export class FloApp {
     }
   }
 
+  /** A sign-in refused on the way of a shutoff is kept like the refresh's: no new try by itself. */
+  async refusedSeen(promise) {
+    try {
+      return await promise;
+    } catch (err) {
+      if (REFUSED.has(err.kind) && !this.refused) {
+        await this.failed(err);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Gladys connected: its configuration is the one the SDK read just before
+   * (SDK 0.16.1, `gladys.config`); asked again, spaced, only if it is missing.
+   * Never taken for empty credentials.
+   */
+  async connectedWith(current, fetch, attempt = 0) {
+    this.timers.clearTimeout(this.configTimer);
+    this.configTimer = undefined;
+    let config = current();
+    if (!config || typeof config !== 'object') {
+      try {
+        config = await fetch();
+      } catch (err) {
+        const wait = TIMINGS.configRetry[Math.min(attempt, TIMINGS.configRetry.length - 1)];
+        this.logger.warn(
+          `Reading the configuration failed: ${err.message}; next try in ${wait / 1000} s`,
+        );
+        await this.setStatus(false, T.configUnread(age(wait)));
+        this.configTimer = this.timers.setTimeout(() => {
+          this.connectedWith(current, fetch, attempt + 1).catch((e) =>
+            this.logger.error(`Start failed: ${e.message}`),
+          );
+        }, wait);
+        return;
+      }
+    }
+    await this.connected(config);
+  }
+
   /** Flo asked to slow down during a command: the refresh and the shutoffs wait too. */
   rateLimited(err) {
     const wait = clamp(
@@ -226,6 +278,8 @@ export class FloApp {
   stop() {
     this.generation += 1;
     this.keeper.stop();
+    this.timers.clearTimeout(this.configTimer);
+    this.configTimer = undefined;
     if (this.tickTimer) {
       this.timers.clearInterval(this.tickTimer);
       this.tickTimer = undefined;
@@ -451,7 +505,12 @@ export class FloApp {
         reading.connected === true && reading.valve === VALVE.CLOSED,
         ticket,
       );
-    } else {
+      if (reading.connected === true && reading.valveTarget === VALVE.OPEN) {
+        // Asked open after a shutoff Flo accepted: opened elsewhere (Moen app).
+        this.keeper.observeOpened(String(id), ticket);
+      }
+    } else if (reading.kind === 'sensor' || (reading.kind === 'other' && reading.type)) {
+      // A device Flo names as another kind; an answer without a type is not one.
       this.keeper.letGo(String(id), 'given up: this Flo device has no valve');
     }
     return reading;
@@ -779,6 +838,10 @@ export class FloApp {
     for (const delay of TIMINGS.readBack) {
       const timer = this.timers.setTimeout(async () => {
         this.readBackTimers.delete(timer);
+        if (this.now() < this.pausedUntil) {
+          // Flo asked to slow down: the next refresh shows the position.
+          return;
+        }
         for (const id of ids) {
           try {
             await this.read(id);
@@ -898,6 +961,9 @@ export class FloApp {
             guard: () => {
               options.post.guard();
               cancelled();
+              if (!this.config.allowValveOpen) {
+                throw this.denied('valveOpen');
+              }
             },
           });
         } catch (err) {
@@ -972,19 +1038,21 @@ export class FloApp {
   async setValueOf(_gladysDevice, feature, value) {
     const deadline = this.now() + TIMINGS.setValueDeadline;
     const target = parseExternalId(feature?.external_id);
-    if (!target || !['valve', 'away'].includes(target.role)) {
+    if (!target || !COMMAND_ROLES.includes(target.role)) {
       throw this.denied('notCommand');
     }
-    const on = Number(value);
+    // The buttons: any push. The valve switch (kept for the scenes made before 0.1.3): 0 or 1.
+    const button = target.role === 'water_close' || target.role === 'water_open';
+    const on = button ? Number(target.role === 'water_open') : Number(value);
     if (on !== 0 && on !== 1) {
       throw this.denied('badValue');
     }
     try {
-      if (target.role === 'valve') {
+      if (target.role !== 'away') {
         const result = await this.setValve(target.id, on === 1, { deadline });
         if (result.kept) {
           // Not sent yet: Gladys shows why, the shutoff still leaves.
-          throw this.denied(result.kept === 'blocked' ? 'closeKeptRefused' : 'closeKept');
+          throw this.denied(this.keptReason(result.kept));
         }
       } else {
         await this.setMode(target.id, on === 1 ? MODES.AWAY : MODES.HOME, { deadline });
@@ -994,6 +1062,14 @@ export class FloApp {
       this.gladys.forgetPublishedStates?.(feature.external_id);
       this.background(this.publishStates(undefined, new Set([target.id])));
     }
+  }
+
+  /** Why a shutoff did not leave yet, for Gladys. */
+  keptReason(outcome) {
+    if (outcome !== 'blocked') {
+      return 'closeKept';
+    }
+    return this.client.hasCredentials && this.refused ? 'closeKeptRefused' : 'closeKeptNoAccount';
   }
 
   // --- Scene actions ---------------------------------------------------------

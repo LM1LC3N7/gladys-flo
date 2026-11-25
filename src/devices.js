@@ -20,9 +20,25 @@ const binary = { min: 0, max: 1 };
 const command = { read_only: false, has_feedback: true };
 
 /** The features, by role. */
+/** A push button (no state): never a switch a "turn everything off" could reach. */
+const button = {
+  category: C.BUTTON,
+  type: TY.BUTTON.PUSH,
+  min: 0,
+  max: 1,
+  read_only: false,
+  has_feedback: false,
+  keep_history: false,
+};
+
 export const FEATURES = {
   // Shutoff
+  // The valve switch of 0.1.0-0.1.2: still understood (scenes made with it)
+  // and still updated where created, no longer offered in Discovery.
   valve: { category: C.SWITCH, type: TY.SWITCH.BINARY, ...binary, ...command },
+  valve_open: { category: C.UNKNOWN, type: TY.SENSOR.BINARY, ...binary },
+  water_close: button,
+  water_open: button,
   away: { category: C.SWITCH, type: TY.SWITCH.BINARY, ...binary, ...command },
   mode: { category: C.TEXT, type: TY.TEXT.TEXT, min: 0, max: 0, keep_history: false },
   flow: {
@@ -78,7 +94,9 @@ export const FEATURES = {
 
 export const ROLES = {
   shutoff: [
-    'valve',
+    'valve_open',
+    'water_close',
+    'water_open',
     'away',
     'mode',
     'flow',
@@ -92,7 +110,7 @@ export const ROLES = {
 };
 
 /** The commands, by role. */
-export const COMMAND_ROLES = ['valve', 'away'];
+export const COMMAND_ROLES = ['water_close', 'water_open', 'valve', 'away'];
 
 export const deviceIds = (gladys, id) => gladys.externalIds('flo', String(id));
 
@@ -160,6 +178,7 @@ export function statesOf(device, { gallonsToday, catalog, language } = {}) {
   if (device.kind === 'shutoff') {
     if (device.valve === 'open' || device.valve === 'closed') {
       add('valve', bit(device.valve === 'open'));
+      add('valve_open', bit(device.valve === 'open'));
     }
     if (device.mode === MODES.HOME || device.mode === MODES.AWAY || device.mode === MODES.SLEEP) {
       // Sleep is not Away: the switch shows 0, the text says "sleep".

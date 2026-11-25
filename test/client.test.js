@@ -160,3 +160,16 @@ test('the request times out, and its timer is cleared', async () => {
     setFetch(previous);
   }
 });
+
+test('a device answer that is not an object is a bad response, never another kind', async () => {
+  const clock = { now: NOW };
+  fake = installFlo(clock);
+  const client = new FloClient({ now: () => clock.now });
+  client.configure({ email: EMAIL, password: PASSWORD, loginMethod: 'flo' });
+  for (const body of ['<html>maintenance</html>', '', '[]', 'null']) {
+    fake.route('GET', /devices\/x$/, () => new Response(body, { status: 200 }));
+    await assert.rejects(client.device('x'), (err) => err.kind === 'bad_response', body);
+  }
+  fake.route('GET', /devices\/y$/, () => json({}));
+  assert.deepEqual(await client.device('y'), {}, 'an object is handed to the model');
+});

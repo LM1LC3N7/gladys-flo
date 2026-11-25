@@ -21,16 +21,33 @@ the notes of the version's GitHub Release.
   waiting for the pause Flo asks for. It is given up 24 hours after it first
   left without Flo showing the valve closed, as the integration status says.
   Once seen closed, reopening the water in the Moen app is never fought.
+- A click sends the shutoff at once even during a pause Flo asked for (one
+  request); a failed send is tried again after 15 seconds; a shutoff is let
+  go when Flo shows an opening asked after it (Moen app), never fought.
 - Opening the valve stays off by default; when allowed, it is refused within
-  20 seconds of a shutoff of the same valve, cancelled by a shutoff asked
-  while it waits its turn, and an opening sent lets an older shutoff go.
-- Warning: the valve is a Gladys switch; a "turn everything off" command or
-  a scene acting on every switch can now shut the water off without any
-  option. Check your scenes and voice assistants.
+  20 seconds of a shutoff of the same valve not yet seen closed, cancelled by
+  a shutoff asked while it waits its turn, and an opening sent lets an older
+  shutoff go.
+- The integration starts from the configuration Gladys gave at the
+  connection; if it is missing, it is asked again, spaced, with an exact
+  status (never taken for refused credentials).
 - Integration SDK 0.16.1 (no change for the devices).
+
+### Added
+
+- **Buttons "Shut the water off" and "Turn the water on"** on the Smart
+  Water Shutoff (opening behind its option), and "Valve open" (read only).
+  A button is never reached by a "turn everything off" command or a scene
+  acting on every switch.
 
 ### Removed
 
+- The valve switch is no longer offered in Discovery. On a device added
+  before, it keeps working (your scenes still close the valve) but a "turn
+  everything off" could now shut the water off. **What to do**: in your
+  scenes, replace the valve switch with the "Shut the water off" button (or
+  the scene action "Flo: open or close the valve"), then run Discovery again
+  and save the device.
 - The option "Allow closing the valve" (`allow_valve_close`): closing is
   always allowed. A configuration that still holds it keeps working, the
   value is ignored.

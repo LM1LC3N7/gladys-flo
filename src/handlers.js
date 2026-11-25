@@ -12,7 +12,7 @@ export function registerHandlers(gladys, app, logger) {
   gladys.onDeviceUpdated((device) => app.deviceCreated(device));
   gladys.onDeviceDeleted((device) => app.deviceDeleted(device));
 
-  // The valve and the Away switch of a Smart Water Shutoff.
+  // The water buttons, the valve switch (older scenes) and the Away switch of a shutoff.
   gladys.onSetValue((device, feature, value) => app.setValueOf(device, feature, value));
 
   // Scene actions.
@@ -26,9 +26,13 @@ export function registerHandlers(gladys, app, logger) {
   gladys.onConfigUpdated((config) => app.configUpdated(config));
 
   // Connection lifecycle: the first connection starts, a reconnection resends.
+  // The SDK (0.16.1) reads the configuration right before 'connected'.
   gladys.on('connected', async () => {
     try {
-      await app.connected(await gladys.getConfig());
+      await app.connectedWith(
+        () => gladys.config,
+        () => gladys.getConfig(),
+      );
     } catch (err) {
       logger?.error('Start failed', err);
     }

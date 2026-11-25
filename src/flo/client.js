@@ -376,8 +376,13 @@ export class FloClient {
   }
 
   /** One device, with its telemetry, valve, mode and pending alerts. */
-  device(deviceId, options = {}) {
-    return this.call(`/devices/${encodeURIComponent(deviceId)}`, options);
+  async device(deviceId, options = {}) {
+    const answer = await this.call(`/devices/${encodeURIComponent(deviceId)}`, options);
+    // An empty or non-JSON answer (a maintenance page) is not a device of another kind.
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+      throw new FloError('bad_response', 'Flo sent no device');
+    }
+    return answer;
   }
 
   /** `target`: "open" or "closed" (aioflo `open_valve` / `close_valve`). */

@@ -17,6 +17,9 @@ export const TYPE_NAMES = {
 /** Feature names, in the language chosen in the configuration. */
 export const FEATURE_NAMES = {
   valve: { en: 'Valve open', fr: 'Vanne ouverte' },
+  valve_open: { en: 'Valve open', fr: 'Vanne ouverte' },
+  water_close: { en: 'Shut the water off', fr: "Couper l'eau" },
+  water_open: { en: 'Turn the water on', fr: "Ouvrir l'eau" },
   away: { en: 'Away mode', fr: 'Mode absent' },
   mode: { en: 'Mode', fr: 'Mode' },
   flow: { en: 'Flow rate', fr: 'Débit' },
@@ -46,6 +49,10 @@ export const T = {
     en: 'Enter the e-mail and the password of your Flo by Moen account (the ones of the Moen Smartwater or Flo app).',
     fr: "Saisissez l'e-mail et le mot de passe de votre compte Flo by Moen (ceux de l'application Moen Smartwater ou Flo).",
   },
+  configUnread: (wait) => ({
+    en: `The configuration could not be read from Gladys: next try in ${wait.en}.`,
+    fr: `La configuration n'a pas pu être lue dans Gladys : nouvel essai dans ${wait.fr}.`,
+  }),
   connecting: {
     en: 'Connecting to Flo…',
     fr: 'Connexion à Flo…',
@@ -123,6 +130,10 @@ export const T = {
     closeKept: {
       en: 'The shutoff could not reach Flo yet: it is kept and sent again until Flo shows the valve closed (24 h at most).',
       fr: "La coupure n'a pas encore pu être envoyée à Flo : elle est gardée et renvoyée jusqu'à ce que Flo montre la vanne fermée (24 h au plus).",
+    },
+    closeKeptNoAccount: {
+      en: 'The Flo account is not configured or not read yet: the shutoff is kept and leaves as soon as it is.',
+      fr: "Le compte Flo n'est pas encore configuré ou lu : la coupure est gardée et part dès qu'il l'est.",
     },
     closeKeptRefused: {
       en: 'Flo refuses the e-mail or the password: the shutoff is kept and leaves as soon as they are fixed.',

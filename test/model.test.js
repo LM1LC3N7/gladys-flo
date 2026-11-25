@@ -229,5 +229,7 @@ test('every feature of every device kind follows the core model', () => {
       device.features.forEach((f) => seen.add(f.external_id.split(':').at(-1)));
     }
   }
-  assert.deepEqual([...seen].sort(), Object.keys(FEATURES).sort(), 'every role checked');
+  // The valve switch of 0.1.0-0.1.2 is no longer built: every other role is.
+  const offered = Object.keys(FEATURES).filter((role) => role !== 'valve');
+  assert.deepEqual([...seen].sort(), offered.sort(), 'every role checked');
 });
