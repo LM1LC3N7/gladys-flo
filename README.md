@@ -4,8 +4,9 @@
 **Flo by Moen**: the Smart Water Shutoff (flow, pressure, water temperature,
 today's use, valve, Home/Away/Sleep mode, alerts) and the Flo Water Sensors
 (leak, temperature, humidity, battery), through the Flo cloud the Moen
-Smartwater app uses, with the account's e-mail and password. Opening and
-closing the valve are off until the user allows each of them. Unofficial, not
+Smartwater app uses, with the account's e-mail and password. Closing the
+valve (shutting the water off) is never refused and is kept until Flo shows
+it closed; opening it is off until the user allows it. Unofficial, not
 affiliated with Moen.
 
 User documentation: [docs/en.md](docs/en.md) · [docs/fr.md](docs/fr.md).
@@ -41,12 +42,18 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (FloApp) ⇄ src/flo/client.js
   family only), pending alerts (text). Water Sensor (`puck_oem`): leak,
   temperature, humidity, battery. Others are skipped. Readings are numbered:
   an older answer never overwrites a newer one.
-- **Valve**: `POST devices/{id}` `{ valve: { target } }` behind
-  `allow_valve_open` / `allow_valve_close` (both off), one command at a time
-  per device, the device read again just before (refused when offline,
-  moving the other way, unknown or unreadable), refused if not sent within
-  3.5 s of a set_value (25 s for a scene action), read back 15 s and 60 s
-  later (after a failure too).
+- **Valve**: `POST devices/{id}` `{ valve: { target } }`. Closing behind no
+  option (src/shutoff.js): sent at once, kept in memory and in
+  `/data/flo-shutoffs.json` until a read started after the send shows it
+  closed (device online); read again 90 s after each send and sent again
+  (3 times, then every 15 min), sent again at a restart and when Flo answers
+  after a failure, waits for a 429 pause, given up 24 h after its first send
+  (monotonic, in the status). Opening behind `allow_valve_open` (off), one at
+  a time per device, the device read again just before (refused when
+  offline, moving, unknown or unreadable), refused within 20 s of a shutoff
+  or after a shutoff clicked since, refused if not sent within 3.5 s of a
+  set_value (25 s for a scene action); an opening sent lets the shutoff go.
+  Read back 15 s and 60 s later (after a failure too).
 - **Mode**: `POST locations/{id}/systemMode` `{ target: home|away }` behind
   `allow_mode_change` (off: Home disarms Flo's automatic shutoff); sleep
   needs a duration and is refused; a locked mode is refused.

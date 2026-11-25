@@ -8,9 +8,11 @@ import { LOGIN_METHODS, REFRESH_INTERVAL } from './constants.js';
 export const DEFAULTS = {
   login_method: LOGIN_METHODS.AUTO,
   refresh_interval: REFRESH_INTERVAL.default,
-  // Louis's rule: a valve is never opened nor closed until the user allows it.
+  // Louis's rule: a valve is never opened until the user allows it. Closing
+  // it shuts the water off: never refused, behind no option (2026-11-25); an
+  // old configuration that still holds `allow_valve_close` is read as usual,
+  // that key is ignored.
   allow_valve_open: false,
-  allow_valve_close: false,
   // Home disarms Flo's automatic shutoff of Away: off too — PROVISIONAL,
   // pending Louis's decision (see TODO.md).
   allow_mode_change: false,
@@ -45,7 +47,6 @@ export function normalizeConfig(raw = {}) {
       ? Math.round(Math.max(REFRESH_INTERVAL.min, Math.min(REFRESH_INTERVAL.max, interval)))
       : DEFAULTS.refresh_interval,
     allowValveOpen: flag(raw?.allow_valve_open, DEFAULTS.allow_valve_open),
-    allowValveClose: flag(raw?.allow_valve_close, DEFAULTS.allow_valve_close),
     allowModeChange: flag(raw?.allow_mode_change, DEFAULTS.allow_mode_change),
     language: LANGUAGES.includes(language) ? language : DEFAULTS.language,
   };

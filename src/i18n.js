@@ -66,6 +66,14 @@ export const T = {
     en: `Flo asks to slow down: pausing for ${wait.en}.`,
     fr: `Flo demande de ralentir : pause de ${wait.fr}.`,
   }),
+  shutoffsKept: (n, held) => ({
+    en: ` ${n === 1 ? '1 shutoff kept' : `${n} shutoffs kept`} until Flo shows the valve closed${held ? ` (${held} held: sent again every 15 min)` : ''}; given up 24 h after it first left.`,
+    fr: ` ${n === 1 ? '1 coupure gardée' : `${n} coupures gardées`} jusqu'à ce que Flo montre la vanne fermée${held ? ` (${held} retenue${held > 1 ? 's' : ''} : renvoyée${held > 1 ? 's' : ''} toutes les 15 min)` : ''} ; abandon 24 h après le premier envoi.`,
+  }),
+  shutoffsGivenUp: (names) => ({
+    en: ` Shutoff given up after 24 h without Flo showing the valve closed: ${names}.`,
+    fr: ` Coupure abandonnée après 24 h sans que Flo montre la vanne fermée : ${names}.`,
+  }),
   offline: {
     en: 'Flo reports this device offline.',
     fr: 'Flo signale cet appareil hors ligne.',
@@ -112,9 +120,21 @@ export const T = {
       en: 'Opening the Flo valve from Gladys is turned off: allow it in the configuration of the Flo integration.',
       fr: "L'ouverture de la vanne Flo depuis Gladys est désactivée : autorisez-la dans la configuration de l'intégration Flo.",
     },
-    valveClose: {
-      en: 'Closing the Flo valve from Gladys is turned off: allow it in the configuration of the Flo integration.',
-      fr: "La fermeture de la vanne Flo depuis Gladys est désactivée : autorisez-la dans la configuration de l'intégration Flo.",
+    closeKept: {
+      en: 'The shutoff could not reach Flo yet: it is kept and sent again until Flo shows the valve closed (24 h at most).',
+      fr: "La coupure n'a pas encore pu être envoyée à Flo : elle est gardée et renvoyée jusqu'à ce que Flo montre la vanne fermée (24 h au plus).",
+    },
+    closeKeptRefused: {
+      en: 'Flo refuses the e-mail or the password: the shutoff is kept and leaves as soon as they are fixed.',
+      fr: "Flo refuse l'e-mail ou le mot de passe : la coupure est gardée et part dès leur correction.",
+    },
+    closeJustClicked: {
+      en: 'A shutoff of this valve was asked less than 20 s ago: the opening is refused, nothing sent.',
+      fr: "Une coupure de cette vanne a été demandée il y a moins de 20 s : l'ouverture est refusée, rien n'est envoyé.",
+    },
+    cancelledByClose: {
+      en: 'Cancelled by a shutoff asked after it: nothing sent.',
+      fr: "Annulée par une coupure demandée après elle : rien n'est envoyé.",
     },
     valveUnknown: {
       en: 'The state of the Flo valve could not be confirmed just now (offline, moving, unknown or not read): the command is refused.',

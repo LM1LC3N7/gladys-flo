@@ -40,36 +40,60 @@ Moen one (newer Moen Smartwater accounts) when Flo refuses or no longer
 answers there. Once Flo refused, only Moen is tried until the configuration
 changes. You can force either.
 
-## Safety: commands off by default
+## Safety: closing always allowed, the rest off by default
+
+**Closing the valve shuts the water off: it protects, so it is never refused
+and needs no option.** A shutoff (the valve switch set to 0, or the scene
+action "close"):
+
+- leaves at once, without waiting for another command of the valve; an
+  opening still waiting its turn is cancelled;
+- is **kept until Flo shows the valve closed** by a reading made after it was
+  sent (device online). Until then it is sent again: the valve is read again
+  90 seconds after each send and the shutoff sent again if it is not closed,
+  3 times, then every 15 minutes; also after a restart of the integration
+  (it is kept in its data) and when Flo answers again after an outage. It
+  waits for the pause Flo asks for (too many requests) and for new
+  credentials when Flo refuses them;
+- is **given up 24 hours after it first left** without Flo showing the valve
+  closed, said in the integration status; also when the device is deleted
+  in Gladys or Flo no longer knows it;
+- once seen closed, it is done: reopening the water in the Moen app later is
+  never fought.
+
+If the shutoff could not reach Flo within the time Gladys waits (3.5 seconds
+from the dashboard), Gladys shows a message saying that it is kept and sent
+again. A scene action "close" never fails because of that: its "Command sent"
+output is then false.
 
 These commands are refused until you allow them in the configuration:
 
 | Option                            | Default | Off: Gladys…               |
 | --------------------------------- | ------- | -------------------------- |
-| Allow closing the valve           | no      | never shuts the water off  |
 | Allow opening the valve           | no      | never turns the water on   |
 | Allow changing the Home/Away mode | no      | never changes the Flo mode |
 
-To shut the water off from a scene when a leak is detected, turn on "Allow
-closing the valve". Even allowed, a valve command:
+Even allowed, an opening:
 
-- runs **one at a time** for a device (two "close" at once are never sent
-  together);
+- runs **one at a time** for a device;
 - reads the device from Flo **just before acting**: if that read fails, the
-  device is offline, or the valve is moving the other way or in an unknown
-  state, the command is **refused**; the state kept in memory never decides;
-- sends nothing when the valve is already where asked, or already moving
-  there;
+  device is offline, or the valve is moving or in an unknown state, the
+  opening is **refused**; the state kept in memory never decides;
+- is refused within 20 seconds of a shutoff of the same valve, and cancelled
+  when a shutoff is asked while it waits its turn;
+- sends nothing when the valve is already open, or already opening;
 - is **refused rather than sent late** when it could not leave in time (3.5
   seconds after the request from the dashboard, 25 seconds for a scene
   action): Gladys would already have shown a failure;
+- lets go of a shutoff of the same valve asked before it (the opening is
+  what you asked last);
 - reads the device again 15 seconds and 60 seconds later (even after a
   failure), to show the real position.
 
-**Warning: as soon as a valve option is on, the valve is a Gladys switch like
-any other.** A voice assistant, a "turn everything off" command or a scene
-acting on every switch can then shut (or open) the water. Check your scenes
-and assistants before turning these options on.
+**Warning: the valve is a Gladys switch like any other.** A voice assistant,
+a "turn everything off" command or a scene acting on every switch can shut
+the water off (always allowed), and open it once that option is on. Check
+your scenes and assistants.
 
 **Home / Away mode** (the "Away mode" switch or a scene action): off by
 default. **Switching to Home disarms the automatic shutoff Flo applies in
@@ -104,7 +128,8 @@ Water Sensor (or **Leak alert** of the shutoff) going to 1. That state is read
 again at every refresh, even if a scene event was missed.
 
 Actions: **Flo: set Home or Away** (one home or all) and **Flo: open or close
-the valve**, behind the options above.
+the valve**: closing is never refused, the others are behind the options
+above.
 
 ## Usage limits
 
@@ -126,7 +151,6 @@ the valve**, behind the options above.
 | Option                            | Default   | Role                                       |
 | --------------------------------- | --------- | ------------------------------------------ |
 | E-mail, password                  | —         | your Flo / Moen Smartwater account         |
-| Allow closing the valve           | no        | see "Safety"                               |
 | Allow opening the valve           | no        | see "Safety"                               |
 | Allow changing the Home/Away mode | no        | see "Safety"                               |
 | Sign-in                           | Automatic | Flo then Moen, or either one               |

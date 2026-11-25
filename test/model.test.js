@@ -5,8 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { normalizeConfig } from '../src/config.js';
-import { statesOf } from '../src/devices.js';
+import { FEATURES, buildDevice, statesOf } from '../src/devices.js';
 import {
   catalogOf,
   categoryOf,
@@ -20,6 +21,7 @@ import {
   valveAtRest,
 } from '../src/flo/model.js';
 import { alertEvents, seenOf } from '../src/triggers.js';
+import { assertCoreDevice } from './helpers/coreFeature.js';
 import { LOCATION, NOW, SENSOR, SHUTOFF, fixture } from './helpers/fakeFlo.js';
 
 test('the locations and their devices', () => {
@@ -124,10 +126,11 @@ test('consumption and the local day of the location', () => {
   });
 });
 
-test('the configuration: valves off by default, bounds, booleans from forms', () => {
+test('the configuration: opening off by default, bounds, booleans from forms', () => {
   const c = normalizeConfig({});
   assert.equal(c.allowValveOpen, false);
-  assert.equal(c.allowValveClose, false);
+  // Closing is never behind an option (2026-11-25): an old key is ignored.
+  assert.equal('allowValveClose' in c, false);
   assert.equal(c.allowModeChange, false);
   assert.equal(c.loginMethod, 'auto');
   assert.equal(c.refreshInterval, 2);
@@ -142,7 +145,7 @@ test('the configuration: valves off by default, bounds, booleans from forms', ()
   });
   assert.equal(d.email, 'a@b.c');
   assert.equal(d.password, ' secret ', 'a password is never trimmed');
-  assert.equal(d.allowValveClose, true);
+  assert.equal('allowValveClose' in d, false);
   assert.equal(d.allowValveOpen, false);
   assert.equal(d.refreshInterval, 60);
   assert.equal(d.loginMethod, 'moen');
@@ -213,4 +216,18 @@ test('the pending alerts text', () => {
     ],
   };
   assert.equal(alertsText(two, catalog, 'none'), 'Fast Water Flow (critical), alarm_55');
+});
+
+test('every feature of every device kind follows the core model', () => {
+  const gladys = createFakeGladys({ selector: 'flo' });
+  const seen = new Set();
+  for (const name of ['device-shutoff.json', 'device-sensor.json']) {
+    const reading = readingOf(fixture(name));
+    for (const language of ['fr', 'en']) {
+      const device = buildDevice(gladys, reading, language, 'Home');
+      assertCoreDevice(device, `${reading.kind} ${language}`);
+      device.features.forEach((f) => seen.add(f.external_id.split(':').at(-1)));
+    }
+  }
+  assert.deepEqual([...seen].sort(), Object.keys(FEATURES).sort(), 'every role checked');
 });

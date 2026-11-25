@@ -15,16 +15,19 @@ This repository: **Flo by Moen** (Smart Water Shutoff and Water Sensors)
 through the Flo cloud, the logic of aioflo (MIT, see THIRD_PARTY_NOTICES.md)
 ported to JavaScript. Decisions and open questions live in `TODO.md`.
 
-**Valve safety is not negotiable**: `allow_valve_open` and `allow_valve_close`
-stay off by default; a valve command is serialized per device, decided on the
-state read from Flo just before (never on the state in memory), and refused
-when that state is unknown, moving or offline. Keep the tests that prove it.
+**Valve safety is not negotiable**: closing the valve shuts the water off
+and is never refused (no option, decision of 2026-11-25): kept and sent again
+until a later read shows it closed, 24 h at most (src/shutoff.js).
+`allow_valve_open` stays off by default; an opening is serialized per device,
+decided on the state read from Flo just before (never on the state in
+memory), and refused when that state is unknown, moving or offline, or when a
+shutoff was clicked since. Keep the tests that prove it.
 
 ## Commands
 
 ```bash
 npm install
-npm test                                  # node --test, the built-in runner
+npm test                                  # node --test --test-timeout=60000
 node --test test/devices.test.js          # one file
 node --test --test-name-pattern "plug"    # tests whose name matches
 npm run lint                              # ESLint
@@ -47,6 +50,8 @@ src/flo/client.js                 Flo cloud client: sign-ins, token, calls, erro
 src/flo/model.js                  Flo answers -> readings (pure)
 src/devices.js                    readings -> Gladys devices and states (pure)
 src/triggers.js                   new alerts -> scene events (pure)
+src/shutoff.js                    ShutoffKeeper: shutoffs kept and sent again until seen closed
+src/store.js                      /data: what the triggers saw, the shutoffs kept
 src/http.js                       the only network access (fetch, timeout); setFetch() in tests
 src/config.js                     DEFAULTS (mirror the manifest) + normalization
 src/constants.js, src/i18n.js     endpoints, keys, timings; en/fr texts
@@ -58,6 +63,11 @@ test/                             node --test, SDK fake Gladys + test/helpers/fa
 
 ## Rules
 
+- **SDK v0.16.** Features follow the core model: every feature has a numeric
+  `min` and `max` (0/0 for text), a non-empty name, `read_only` and
+  `has_feedback`, or Gladys answers HTTP 422; the SDK's fake Gladys (0.16.1)
+  checks part of it, `test/helpers/coreFeature.js` checks all. The devices
+  carry no `poll_frequency` (Gladys 5.3 polls only those): keep it so.
 - **External ids are forever.** Build them with
   `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
   platform gives the device (serial, cloud id, MAC), never a label. Gladys keys

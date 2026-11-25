@@ -130,10 +130,12 @@ test('the configuration matches the code', () => {
     [fields.refresh_interval.min, fields.refresh_interval.max],
     [REFRESH_INTERVAL.min, REFRESH_INTERVAL.max],
   );
-  for (const key of ['allow_valve_open', 'allow_valve_close', 'allow_mode_change']) {
+  for (const key of ['allow_valve_open', 'allow_mode_change']) {
     assert.equal(fields[key].type, 'boolean');
     assert.equal(fields[key].default, false, `${key} is off by default (Louis's rule)`);
   }
+  // Closing the valve shuts the water off: never behind an option (2026-11-25).
+  assert.equal(fields.allow_valve_close, undefined);
   const intro = fields.intro;
   assert.equal(intro.type, 'section');
   for (const lang of ['en', 'fr']) {

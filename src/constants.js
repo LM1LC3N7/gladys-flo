@@ -125,6 +125,23 @@ export const TIMINGS = {
   readBack: [15_000, 60_000],
   /** The test button and the Discovery scan read Flo at most this often. */
   testCooldown: 30_000,
+  /**
+   * A shutoff kept (src/shutoff.js): read again this long after each send
+   * (after the read backs of 15 s and 60 s) and sent again when the valve is
+   * not seen closed, `shutoffResends` times, then every `shutoffHeldEvery`;
+   * given up `shutoffExpiry` after it first left. At most one request of a
+   * kept shutoff in flight per device: no storm, whatever happens.
+   */
+  shutoff: {
+    check: 90_000,
+    resends: 3,
+    heldEvery: 15 * 60_000,
+    expiry: 24 * 60 * 60_000,
+    /** A restart or a recovery of Flo sends it again, unless it left less than this ago. */
+    minGap: 60_000,
+    /** An opening is refused this long after a shutoff of the same valve was clicked. */
+    openBlock: 20_000,
+  },
 };
 
 export const LIMITS = {

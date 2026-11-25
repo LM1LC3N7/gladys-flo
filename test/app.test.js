@@ -5,7 +5,7 @@
 
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEVICE_TRANSPORTS } from '@gladysassistant/integration-sdk';
@@ -33,7 +33,15 @@ const dev = (id) => `ext:flo:flo:${id}`;
 
 let fake;
 const dirs = [];
-afterEach(() => {
+const apps = [];
+afterEach(async () => {
+  // No app of a test keeps running into the next one (fetch is global), and
+  // no write to /data lands after its directory is removed.
+  for (const app of apps.splice(0)) {
+    app.stop();
+    await app.keeper.saving;
+  }
+  await new Promise((resolve) => setImmediate(resolve));
   fake?.restore();
   for (const dir of dirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -65,7 +73,15 @@ async function setup({
   for (const level of ['debug', 'info', 'warn', 'error']) {
     logger[level] = (...args) => lines.push(`${level}: ${args.map(String).join(' ')}`);
   }
-  const app = new FloApp({ gladys, logger, now: () => clock.now, timers, dataDir: data });
+  const app = new FloApp({
+    gladys,
+    logger,
+    now: () => clock.now,
+    monotonic: () => clock.now,
+    timers,
+    dataDir: data,
+  });
+  apps.push(app);
   registerHandlers(gladys, app, logger);
   await gladys.connect();
   await app.running;
@@ -468,86 +484,502 @@ test('the password and the tokens never reach a log or a status', async () => {
   assert.ok(!/flo-\d+/.test(everything), 'no token');
 });
 
-// --- Valve ----------------------------------------------------------------------------
-
-test('valve commands are refused by default, without any call', async () => {
-  const { gladys } = await setup();
-  const before = fake.calls.length;
-  await assert.rejects(
-    app_set(gladys, 0),
-    /Closing the Flo valve from Gladys is turned off|fermeture/,
-  );
-  await assert.rejects(app_set(gladys, 1), /Opening|ouverture/);
-  assert.equal(fake.calls.length, before);
-});
+// --- Valve: the shutoff, never refused ---------------------------------------------------
 
 /** The valve switch through the fake Gladys: resolves, or rejects with the ack's error. */
 const app_set = (gladys, value) => set(gladys, SHUTOFF, 'valve', value);
+const posts = () => fake.made(/^POST .*devices/);
+const closes = () => posts().filter((c) => c.body.valve.target === 'closed');
+const opens = () => posts().filter((c) => c.body.valve.target === 'open');
+const keptFile = (data) => {
+  try {
+    return JSON.parse(readFileSync(join(data, 'flo-shutoffs.json'), 'utf8')).shutoffs;
+  } catch {
+    return undefined;
+  }
+};
+/** Lets the background work (a send, a save of /data) run. */
+const settle = async (times = 5) => {
+  for (let i = 0; i < times; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+};
+/** Waits (bounded) for `condition`: never hangs. */
+const until = async (condition, what = 'condition') => {
+  for (let i = 0; i < 500; i += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+};
+const delays = (timers) =>
+  timers
+    .timeouts()
+    .map((t) => t.ms)
+    .sort((a, b) => a - b);
+/** Runs the pending timeouts, the clock moved to the latest of them. */
+const runAll = async (timers, clock) => {
+  clock.now += Math.max(0, ...timers.timeouts().map((t) => t.ms));
+  await timers.runTimeouts();
+  await settle();
+};
+const status = (gladys) => gladys.fake.connectionStatus.message;
+const closedNow = () => {
+  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'closed' };
+};
 
-test('closing: allowed, the state is read again just before, then read back', async () => {
-  const { gladys, timers } = await setup();
-  await allow(gladys, { allow_valve_close: true });
+test('closing needs no option: sent at once, nothing read before, kept until seen closed', async () => {
+  const { gladys, app, timers, clock, data } = await setup();
   const before = fake.calls.length;
   await app_set(gladys, 0);
   const sent = fake.calls.slice(before).map((c) => `${c.method} ${c.path.replace(/^[^/]+/, '')}`);
-  assert.deepEqual(sent, [`GET /api/v2/devices/${SHUTOFF}`, `POST /api/v2/devices/${SHUTOFF}`]);
+  assert.deepEqual(sent, [`POST /api/v2/devices/${SHUTOFF}`], 'nothing read before it leaves');
   assert.deepEqual(fake.calls.at(-1).body, { valve: { target: 'closed' } });
-  // The device reports the new position later: read back at 15 s and 60 s.
-  assert.equal(timers.timeouts().length, 2);
-  fake.state.devices[SHUTOFF].valve.lastKnown = 'closed';
-  await timers.runTimeouts();
+  await app.keeper.saving;
+  assert.deepEqual(keptFile(data), [{ id: SHUTOFF, name: 'Smart Water Shutoff', at: clock.now }]);
+  // Read back at 15 s and 60 s, checked at 90 s.
+  assert.deepEqual(delays(timers), [15_000, 60_000, 90_000]);
+  assert.match(status(gladys).fr, /1 coupure gardée jusqu'à ce que Flo montre la vanne fermée/);
+  assert.match(status(gladys).en, /1 shutoff kept until Flo shows the valve closed/);
+  // The valve closes; the read back of 15 s sees it: done, forgotten.
+  closedNow();
+  await runAll(timers, clock);
+  assert.equal(app.keeper.entries.size, 0);
+  await app.keeper.saving;
+  assert.deepEqual(keptFile(data), []);
+  assert.doesNotMatch(status(gladys).fr, /coupure/);
   assert.equal(last(gladys, SHUTOFF, 'valve'), 0);
-  // Opening stays refused.
-  await assert.rejects(app_set(gladys, 1), /Opening|ouverture/);
+  assert.equal(closes().length, 1, 'never sent again once seen closed');
+  assert.equal(timers.timeouts().length, 0, 'nothing left to run');
+  // Opening stays refused by default.
+  await assert.rejects(
+    app_set(gladys, 1),
+    /ouverture de la vanne Flo depuis Gladys est désactivée/,
+  );
+  assert.equal(opens().length, 0);
 });
 
-test('a valve already in place: no command sent', async () => {
-  const { gladys } = await setup();
+test('an old configuration holding allow_valve_close changes nothing', async () => {
+  for (const value of [false, 'false', true]) {
+    const { gladys, app } = await setup({ config: { ...CONFIG, allow_valve_close: value } });
+    assert.equal(gladys.fake.connectionStatus.connected, true);
+    assert.equal('allowValveClose' in app.config, false);
+    await app_set(gladys, 0);
+    assert.equal(closes().length, 1, `closed with allow_valve_close ${value}`);
+    await assert.rejects(app_set(gladys, 1), /ouverture/);
+    app.stop();
+    fake.restore();
+  }
+});
+
+test('a shutoff never refused: valve unknown, moving, offline or unreadable', async () => {
+  const { gladys, app } = await setup();
+  const original = structuredClone(fake.state.devices[SHUTOFF]);
+  const cases = [
+    (d) => (d.valve = { target: 'open', lastKnown: 'closed' }),
+    (d) => (d.valve = { lastKnown: 'unknown' }),
+    (d) => (d.isConnected = false),
+    () => fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 503)),
+  ];
+  for (const [i, change] of cases.entries()) {
+    fake.state.devices[SHUTOFF] = structuredClone(original);
+    change(fake.state.devices[SHUTOFF]);
+    await app_set(gladys, 0);
+    assert.equal(closes().length, i + 1);
+  }
+  assert.equal(app.keeper.entries.size, 1, 'one shutoff kept per valve');
+});
+
+test('a shutoff seen closed only by a read started after it was sent, device online', async () => {
+  const { app, timers, clock } = await setup();
+  let release;
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), async () => {
+    await new Promise((resolve) => (release = resolve));
+    return PASS;
+  });
+  const closing = app.setValve(SHUTOFF, false);
+  await settle();
+  assert.ok(release, 'the shutoff is on its way');
+  // A read started before the send ended shows the valve closed: not a confirmation.
+  closedNow();
+  const early = app.read(SHUTOFF);
+  release();
+  await closing;
+  await early;
+  assert.equal(app.keeper.entries.size, 1, 'kept');
+  // Read after the send, but the device offline: not a confirmation either.
+  fake.state.devices[SHUTOFF].isConnected = false;
+  await app.read(SHUTOFF);
+  assert.equal(app.keeper.entries.size, 1, 'kept');
+  // Open after the send: kept.
+  fake.state.devices[SHUTOFF].isConnected = true;
+  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'open' };
+  await app.read(SHUTOFF);
+  assert.equal(app.keeper.entries.size, 1, 'kept');
+  closedNow();
+  await app.read(SHUTOFF);
+  assert.equal(app.keeper.entries.size, 0, 'seen closed: done');
+  await runAll(timers, clock);
+  assert.equal(closes().length, 1);
+});
+
+test('a shutoff not seen closed: sent again 3 times, then every 15 min, given up after 24 h', async () => {
+  const { gladys, app, timers, clock, data } = await setup();
+  const firstSent = clock.now;
+  await app.setValve(SHUTOFF, false);
+  assert.equal(closes().length, 1);
+  const getsBefore = fake.made(/^GET .*devices/).length;
+  for (let resend = 1; resend <= 3; resend += 1) {
+    assert.deepEqual(delays(timers), [15_000, 60_000, 90_000]);
+    await runAll(timers, clock);
+    assert.equal(closes().length, 1 + resend, `resend ${resend}`);
+  }
+  // No storm: three reads (15 s, 60 s, 90 s) and one send per round.
+  assert.equal(fake.made(/^GET .*devices/).length - getsBefore, 9);
+  // The budget is spent: held, checked every 15 min.
+  await runAll(timers, clock);
+  assert.equal(closes().length, 4, 'held: not sent at this check');
+  assert.deepEqual(delays(timers), [15 * MINUTE]);
+  assert.match(status(gladys).fr, /1 retenue : renvoyée toutes les 15 min/);
+  await runAll(timers, clock);
+  assert.equal(closes().length, 5, 'sent again after 15 min');
+  assert.deepEqual(delays(timers), [15_000, 60_000, 15 * MINUTE]);
+  // 24 h after the first send: given up, said in the status, forgotten in /data.
+  clock.now = firstSent + 24 * 60 * MINUTE - 15 * MINUTE;
+  await runAll(timers, clock);
+  assert.equal(app.keeper.entries.size, 0);
+  assert.equal(closes().length, 5, 'not sent at the give-up');
+  assert.match(
+    status(gladys).fr,
+    /Coupure abandonnée après 24 h sans que Flo montre la vanne fermée : Smart Water Shutoff/,
+  );
+  await app.keeper.saving;
+  assert.deepEqual(keptFile(data), []);
+  assert.equal(timers.timeouts().length, 0);
+});
+
+test('a held shutoff still checked 1 ms before 24 h is sent again', async () => {
+  const { app, timers, clock } = await setup();
+  const firstSent = clock.now;
+  await app.setValve(SHUTOFF, false);
+  for (let i = 0; i < 4; i += 1) {
+    await runAll(timers, clock);
+  }
+  assert.equal(app.keeper.entries.get(SHUTOFF).held, true);
+  const sent = closes().length;
+  clock.now = firstSent + 24 * 60 * MINUTE - 1 - 15 * MINUTE;
+  await runAll(timers, clock);
+  assert.equal(closes().length, sent + 1);
+  assert.equal(app.keeper.entries.size, 1);
+});
+
+test('a shutoff that could not leave: Gladys is told, it is sent again', async () => {
+  const { gladys, app, timers, clock } = await setup();
+  let fail = true;
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => (fail ? json({}, 503) : PASS));
+  await assert.rejects(app_set(gladys, 0), /gardée et renvoyée jusqu'à ce que Flo montre/);
+  assert.equal(app.keeper.entries.size, 1);
+  assert.deepEqual(delays(timers), [15_000, 60_000, 90_000], 'read back, then checked');
+  fail = false;
+  await runAll(timers, clock);
+  assert.equal(closes().length, 2);
+  closedNow();
+  await runAll(timers, clock);
+  assert.equal(app.keeper.entries.size, 0);
+  // A scene action "close" never fails because of that.
+  fail = true;
+  fake.state.devices[SHUTOFF].valve = { target: 'open', lastKnown: 'open' };
+  const out = await sceneAction(gladys, SCENE_ACTIONS.SET_VALVE, {
+    device: dev(SHUTOFF),
+    action: 'close',
+  });
+  assert.deepEqual(out, { device_name: 'Smart Water Shutoff', valve: 'closed', changed: false });
+  assert.equal(app.keeper.entries.size, 1, 'kept');
+});
+
+test('a slow shutoff: Gladys answered by 3.5 s, the send goes on', async () => {
+  const { gladys, app, timers, clock } = await setup();
+  let release;
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), async () => {
+    await new Promise((resolve) => (release = resolve));
+    return PASS;
+  });
+  const ack = app_set(gladys, 0);
+  await settle();
+  // The deadline timer of the answer (3.5 s) is the only one pending.
+  assert.deepEqual(delays(timers), [3_500]);
+  clock.now += 3_500;
+  await timers.runTimeouts();
+  await assert.rejects(ack, /gardée et renvoyée/);
+  release();
+  await settle();
+  assert.equal(closes().length, 1);
+  assert.deepEqual(delays(timers), [15_000, 60_000, 90_000]);
+  assert.equal(app.keeper.entries.size, 1);
+});
+
+test('a shutoff waits for the pause Flo asks for (429), never sent before', async () => {
+  const { gladys, app, timers, clock } = await setup();
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () =>
+    json({}, 429, { 'Retry-After': '600' }),
+  );
+  await assert.rejects(app_set(gladys, 0), /gardée/);
+  assert.equal(app.pausedUntil, clock.now + 600_000);
+  // Checked at 90 s: the pause is not over, the check waits for it.
+  const shutoffTimer = () => timers.timeouts().find((t) => t.ms !== 15_000 && t.ms !== 60_000);
+  assert.equal(shutoffTimer().ms, 90_000);
+  clock.now += 90_000;
+  const gets = fake.made(/^GET/).length;
+  const check = shutoffTimer();
+  timers.pending.delete(check.id);
+  await check.fn();
+  assert.equal(fake.made(/^GET/).length, gets, 'nothing read during the pause');
+  assert.equal(shutoffTimer().ms, 510_000, 'until the end of the pause');
+  assert.equal(closes().length, 1);
+});
+
+test('a refused account: the shutoff is kept, it leaves once the account works', async () => {
+  const { gladys, app, timers, clock } = await setup();
+  app.refused = true;
+  await assert.rejects(
+    app_set(gladys, 0),
+    /refuse l'e-mail ou le mot de passe : la coupure est gardée/,
+  );
+  assert.equal(closes().length, 0);
+  assert.equal(app.keeper.entries.size, 1);
+  // Its check finds the account refused: nothing sent, no timer left.
+  await runAll(timers, clock);
+  assert.equal(closes().length, 0);
+  assert.equal(timers.timeouts().length, 0);
+  // The test button: Flo accepts the account again, the shutoff leaves.
+  await action(gladys, ACTIONS.TEST_CONNECTION);
+  await until(() => closes().length === 1, 'the shutoff sent once the account works');
+  // New credentials restart: a shutoff kept leaves again at the start.
+  fake.state.devices[SHUTOFF].valve = { target: 'open', lastKnown: 'open' };
+  clock.now += MINUTE;
+  await gladys.fake.configUpdated({ ...CONFIG, login_method: 'flo' });
+  await until(() => closes().length === 2, 'the shutoff sent again at the restart');
+});
+
+test('a shutoff kept across a restart is sent again from /data', async () => {
+  const clock = { now: NOW };
+  const installed = installFlo(clock);
+  const data = dataDir();
+  const first = await setup({ installed, data });
+  await first.app.setValve(SHUTOFF, false);
+  first.app.stop();
+  await first.app.keeper.saving;
+  assert.equal(keptFile(data).length, 1);
+  assert.equal(first.timers.timeouts().length, 0, 'no timer after stop()');
+  const second = await setup({ installed, data });
+  await until(() => closes().length === 2, 'the shutoff sent again at the start');
+  assert.match(status(second.gladys).fr, /1 coupure gardée/);
+  closedNow();
+  await runAll(second.timers, clock);
+  assert.equal(second.app.keeper.entries.size, 0);
+  second.app.stop();
+});
+
+test('/data unreadable at start: read again at each tick, then sent', async () => {
+  const data = dataDir();
+  mkdirSync(join(data, 'flo-shutoffs.json'));
+  const { app, advance, lines } = await setup({ data });
+  assert.equal(app.shutoffsLoaded, false);
+  assert.ok(lines.some((l) => /Reading the shutoffs kept/.test(l)));
+  rmSync(join(data, 'flo-shutoffs.json'), { recursive: true });
+  writeFileSync(
+    join(data, 'flo-shutoffs.json'),
+    JSON.stringify({ version: 1, shutoffs: [{ id: SHUTOFF, name: 'Kept', at: 1 }] }),
+  );
+  await advance(1);
+  await until(() => app.shutoffsLoaded, 'read again');
+  await until(() => closes().length === 1, 'the shutoff read again sent');
+});
+
+test('a shutoff is sent again when Flo answers after an outage', async () => {
+  const { app, advance } = await setup();
+  await app.setValve(SHUTOFF, false);
+  let down = true;
+  fake.route('GET', /users\/me$|users\/[^/]+$/, () => (down ? json({}, 503) : PASS));
+  await advance(2);
+  assert.equal(app.failures, 1);
+  assert.equal(closes().length, 1, 'nothing sent while Flo is down');
+  down = false;
+  await advance(1);
+  assert.equal(app.failures, 0);
+  await until(() => closes().length === 2, 'the shutoff sent again with Flo back');
+});
+
+test('an opening: cancelled by a shutoff clicked while it waits, refused within 20 s', async () => {
+  const { gladys, app, clock } = await setup();
   await allow(gladys, { allow_valve_open: true });
+  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'closed' };
+  let release;
+  fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), async () => {
+    if (!release) {
+      await new Promise((resolve) => (release = resolve));
+    }
+    return PASS;
+  });
+  const opening = app.setValve(SHUTOFF, true);
+  await settle();
+  assert.ok(release, 'the opening reads the valve');
+  await app.setValve(SHUTOFF, false);
+  release();
+  await assert.rejects(opening, /Annulée par une coupure demandée après elle/);
+  assert.equal(opens().length, 0, 'the opening never left');
+  assert.equal(closes().length, 1);
+  // Within 20 s of the shutoff: refused before anything.
+  clock.now += 19_000;
+  const gets = fake.made(/^GET/).length;
+  await assert.rejects(app.setValve(SHUTOFF, true), /il y a moins de 20 s/);
+  assert.equal(fake.made(/^GET/).length, gets);
+  // Later: sent, and the shutoff is let go (the opening is what was asked last).
+  clock.now += 2_000;
+  closedNow();
+  const result = await app.setValve(SHUTOFF, true);
+  assert.equal(result.changed, true);
+  assert.equal(opens().length, 1);
+  assert.equal(app.keeper.entries.size, 0);
+});
+
+test('a shutoff clicked during the request of an opening is not let go by it', async () => {
+  const { gladys, app, clock } = await setup();
+  await allow(gladys, { allow_valve_open: true });
+  closedNow();
+  let release;
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), async ({ body }) => {
+    if (body.valve.target === 'open') {
+      await new Promise((resolve) => (release = resolve));
+    }
+    return PASS;
+  });
+  const opening = app.setValve(SHUTOFF, true);
+  while (!release) {
+    await settle(1);
+  }
+  clock.now += 1_000;
+  await app.setValve(SHUTOFF, false);
+  release();
+  await opening;
+  assert.equal(app.keeper.entries.size, 1, 'the later shutoff is still kept');
+});
+
+test('an opening already in place lets a shutoff asked before it go', async () => {
+  const { gladys, app, clock } = await setup();
+  await allow(gladys, { allow_valve_open: true });
+  await app.setValve(SHUTOFF, false);
+  clock.now += 21_000;
+  // The fake valve stays open: nothing to send, the user wants it open.
+  fake.state.devices[SHUTOFF].valve = { target: 'open', lastKnown: 'open' };
+  const result = await app.setValve(SHUTOFF, true);
+  assert.equal(result.changed, false);
+  assert.equal(app.keeper.entries.size, 0);
+});
+
+test('a shutoff clicked while an opening reads an open valve is not let go by it', async () => {
+  const { gladys, app } = await setup();
+  await allow(gladys, { allow_valve_open: true });
+  let release;
+  fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), async () => {
+    if (!release) {
+      await new Promise((resolve) => (release = resolve));
+    }
+    return PASS;
+  });
+  const opening = app.setValve(SHUTOFF, true);
+  await settle();
+  assert.ok(release, 'the opening reads the valve');
+  await app.setValve(SHUTOFF, false);
+  // The fake valve stays open: the opening would find nothing to send.
+  release();
+  await assert.rejects(opening, /Annulée par une coupure/);
+  assert.equal(app.keeper.entries.size, 1, 'the later shutoff is kept');
+});
+
+test('an opening finding the valve open at rest lets an older shutoff go', async () => {
+  const { gladys, app, clock } = await setup();
+  await allow(gladys, { allow_valve_open: true });
+  await app.setValve(SHUTOFF, false);
+  clock.now += 21_000;
+  fake.state.devices[SHUTOFF].valve = { lastKnown: 'open' };
+  const result = await app.setValve(SHUTOFF, true);
+  assert.equal(result.changed, false);
+  assert.equal(app.keeper.entries.size, 0);
+});
+
+test('a shutoff kept in /data for a device that has no valve is given up', async () => {
+  const data = dataDir();
+  writeFileSync(
+    join(data, 'flo-shutoffs.json'),
+    JSON.stringify({ version: 1, shutoffs: [{ id: SENSOR, name: 'Sensor', at: 1 }] }),
+  );
+  const { app } = await setup({ data });
+  assert.equal(app.keeper.entries.size, 0);
+});
+
+test('a shutoff let go: device deleted in Gladys, unknown to Flo (404), not a valve', async () => {
+  const { gladys, app } = await setup();
+  await app.setValve(SHUTOFF, false);
+  await gladys.fake.deviceDeleted(deviceOf(gladys, SHUTOFF));
+  assert.equal(app.keeper.entries.size, 0);
+  // Flo answers 404: given up.
+  fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 404));
+  await app.setValve(SHUTOFF, false).catch(() => {});
+  assert.equal(app.keeper.entries.size, 0);
+  // A Water Sensor has no valve.
+  await assert.rejects(app.setValve(SENSOR, false), /n'a pas de vanne/);
+});
+
+test('openings refused by default; the opening is decided on a fresh read', async () => {
+  const { gladys } = await setup();
+  await assert.rejects(app_set(gladys, 1), /ouverture de la vanne Flo/);
+  assert.equal(posts().length, 0);
+  await allow(gladys, { allow_valve_open: true });
+  // Already open: nothing sent, the read only.
   const before = fake.calls.length;
   await app_set(gladys, 1);
-  assert.equal(fake.made(/^POST .*devices/).length, 0);
+  assert.equal(posts().length, 0);
   assert.equal(fake.calls.length, before + 1, 'the read only');
 });
 
-test('the valve is refused when its state is unknown, moving, offline or unreadable', async () => {
+test('an opening is refused when the valve is unknown, moving, offline or unreadable', async () => {
   const { gladys } = await setup();
-  await allow(gladys, { allow_valve_close: true });
+  await allow(gladys, { allow_valve_open: true });
   const cases = [
-    (d) => (d.valve = { target: 'open', lastKnown: 'closed' }), // moving the other way
+    (d) => (d.valve = { target: 'closed', lastKnown: 'open' }), // moving
     (d) => (d.valve = { lastKnown: 'unknown' }),
-    (d) => (d.valve = { target: 'open', lastKnown: 'broken' }),
+    (d) => (d.valve = { target: 'closed', lastKnown: 'broken' }),
     (d) => (d.isConnected = false),
     (d) => delete d.isConnected,
   ];
+  closedNow();
   const original = structuredClone(fake.state.devices[SHUTOFF]);
   for (const change of cases) {
     fake.state.devices[SHUTOFF] = structuredClone(original);
     change(fake.state.devices[SHUTOFF]);
-    await assert.rejects(app_set(gladys, 0), /could not be confirmed|pas pu être confirmé/);
+    await assert.rejects(app_set(gladys, 1), /could not be confirmed|pas pu être confirmé/);
   }
   fake.state.devices[SHUTOFF] = structuredClone(original);
   fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 503));
-  await assert.rejects(app_set(gladys, 0), /could not be confirmed|pas pu être confirmé/);
-  assert.equal(fake.made(/^POST .*devices/).length, 0, 'never sent');
+  await assert.rejects(app_set(gladys, 1), /could not be confirmed|pas pu être confirmé/);
+  assert.equal(posts().length, 0, 'never sent');
 });
 
-test('the state in memory never decides: a valve closed elsewhere is read again', async () => {
+test('the state in memory never decides an opening: a valve opened elsewhere is read again', async () => {
   const { gladys, app } = await setup();
-  await allow(gladys, { allow_valve_close: true });
-  // Gladys still believes it open; Flo says closed: nothing to send.
-  assert.equal(app.devices.get(SHUTOFF).valve, 'open');
-  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'closed' };
-  await app_set(gladys, 0);
-  assert.equal(fake.made(/^POST .*devices/).length, 0);
-  // The publications to Gladys run after the ack.
-  await app.settled();
-  assert.equal(last(gladys, SHUTOFF, 'valve'), 0);
+  await allow(gladys, { allow_valve_open: true });
+  app.devices.get(SHUTOFF).valve = 'closed';
+  await app_set(gladys, 1);
+  assert.equal(posts().length, 0, 'Flo says open: nothing to send');
 });
 
-test('valve commands of one device run one at a time, each on a fresh read', async () => {
+test('openings of one device run one at a time, each on a fresh read', async () => {
   const { gladys, app } = await setup();
-  await allow(gladys, { allow_valve_close: true });
+  await allow(gladys, { allow_valve_open: true });
+  closedNow();
   fake.state.valveBehaviour = 'follow';
   const order = [];
   fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), async () => {
@@ -556,37 +988,30 @@ test('valve commands of one device run one at a time, each on a fresh read', asy
     return PASS;
   });
   fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => {
-    order.push('close');
+    order.push('open');
     return PASS;
   });
-  const results = await Promise.all([app.setValve(SHUTOFF, false), app.setValve(SHUTOFF, false)]);
-  assert.deepEqual(order, ['read', 'close', 'read']);
+  const results = await Promise.all([app.setValve(SHUTOFF, true), app.setValve(SHUTOFF, true)]);
+  assert.deepEqual(order, ['read', 'open', 'read']);
   assert.deepEqual(
     results.map((r) => r.changed),
     [true, false],
   );
 });
 
-test('a Water Sensor has no valve', async () => {
-  const { gladys, app } = await setup();
-  await allow(gladys, { allow_valve_close: true });
-  await assert.rejects(app.setValve(SENSOR, false), /n'a pas de vanne/);
-});
-
-test('a valve already moving to the target: nothing sent, no error', async () => {
+test('a valve already opening: nothing sent, no error', async () => {
   const { gladys, app, timers } = await setup();
-  await allow(gladys, { allow_valve_close: true });
-  fake.state.devices[SHUTOFF].valve = { target: 'closed', lastKnown: 'open' };
-  const result = await app.setValve(SHUTOFF, false);
+  await allow(gladys, { allow_valve_open: true });
+  fake.state.devices[SHUTOFF].valve = { target: 'open', lastKnown: 'closed' };
+  const result = await app.setValve(SHUTOFF, true);
   assert.equal(result.changed, false);
-  assert.equal(result.valve, 'open', 'the real position, not the target');
-  assert.equal(fake.made(/^POST .*devices/).length, 0);
+  assert.equal(result.valve, 'closed', 'the real position, not the target');
+  assert.equal(posts().length, 0);
   assert.equal(timers.timeouts().length, 2, 'followed until it gets there');
 });
 
 test('the ack does not wait for the publications to Gladys', async () => {
   const { gladys, app } = await setup();
-  await allow(gladys, { allow_valve_close: true });
   let release;
   const original = gladys.publishChangedStates.bind(gladys);
   gladys.publishChangedStates = async (...args) => {
@@ -602,39 +1027,37 @@ test('the ack does not wait for the publications to Gladys', async () => {
   assert.equal(app.pending.size, 0);
 });
 
-test('a failed valve command is read back all the same', async () => {
+test('a failed opening is read back all the same', async () => {
   const { gladys, timers, app } = await setup();
-  await allow(gladys, { allow_valve_close: true });
+  await allow(gladys, { allow_valve_open: true });
+  closedNow();
   fake.route('POST', new RegExp(`devices/${SHUTOFF}$`), () => json({}, 503));
-  await assert.rejects(app_set(gladys, 0), /unavailable/);
+  await assert.rejects(app_set(gladys, 1), /unavailable/);
   assert.equal(timers.timeouts().length, 2, 'read back at 15 s and 60 s');
   // The known state is published again (Gladys showed the value asked for).
   await app.settled();
-  assert.equal(last(gladys, SHUTOFF, 'valve'), 1);
+  assert.equal(last(gladys, SHUTOFF, 'valve'), 0);
 });
 
-test('a command not sent within 3.5 s of its arrival is refused, never sent late', async () => {
+test('an opening not sent within 3.5 s of its arrival is refused, never sent late', async () => {
   const { gladys, clock, app } = await setup();
-  await allow(gladys, { allow_valve_close: true, allow_mode_change: true });
+  await allow(gladys, { allow_valve_open: true, allow_mode_change: true });
+  closedNow();
   // The read just before acting takes 4 s.
   fake.route('GET', new RegExp(`devices/${SHUTOFF}$`), () => {
     clock.now += 4_000;
     return PASS;
   });
-  await assert.rejects(app_set(gladys, 0), /attendu trop longtemps/);
+  await assert.rejects(app_set(gladys, 1), /attendu trop longtemps/);
   await assert.rejects(set(gladys, SHUTOFF, 'away', 1), /attendu trop longtemps/);
   assert.equal(fake.made(/^POST api-gw/).length, 0);
   // A scene action has 25 s: 4 s is fine.
-  await app.setValve(SHUTOFF, false);
-  assert.equal(fake.made(/^POST .*devices/).length, 1);
-  // The request of a command has a short timeout.
-  const post = fake.made(/^POST .*devices/)[0];
-  assert.ok(post, 'sent');
+  await app.setValve(SHUTOFF, true);
+  assert.equal(opens().length, 1);
 });
 
 test('the request timeouts of a command follow its deadline', async () => {
-  const { gladys, app, clock } = await setup();
-  await allow(gladys, { allow_valve_close: true });
+  const { app, clock } = await setup();
   const options = app.commandOptions(clock.now + 3_500);
   assert.equal(options.read.timeout(), 3_500);
   assert.equal(options.post.timeout(), 4_500);
@@ -738,18 +1161,17 @@ test('scene action set_mode: every home, or the home of a device', async () => {
   assert.deepEqual(out2, { mode: 'home', locations: 1 });
 });
 
-test('scene action set_valve: behind the option, then on a fresh read', async () => {
+test('scene action set_valve: closing without option, opening behind it', async () => {
   const { gladys } = await setup();
-  await assert.rejects(
-    sceneAction(gladys, SCENE_ACTIONS.SET_VALVE, { device: dev(SHUTOFF), action: 'close' }),
-    /fermeture de la vanne Flo depuis Gladys est désactivée/,
-  );
-  await allow(gladys, { allow_valve_close: true });
   const out = await sceneAction(gladys, SCENE_ACTIONS.SET_VALVE, {
     device: dev(SHUTOFF),
     action: 'close',
   });
   assert.deepEqual(out, { device_name: 'Smart Water Shutoff', valve: 'closed', changed: true });
+  await assert.rejects(
+    sceneAction(gladys, SCENE_ACTIONS.SET_VALVE, { device: dev(SHUTOFF), action: 'open' }),
+    /ouverture de la vanne Flo depuis Gladys est désactivée/,
+  );
 });
 
 // --- Scene triggers -------------------------------------------------------------------

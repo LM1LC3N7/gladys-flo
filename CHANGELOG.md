@@ -10,6 +10,31 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Changed
+
+- **Closing the valve (shutting the water off) is never refused any more and
+  needs no option**: it protects (Louis's rule of 2026-11-25). The shutoff
+  leaves at once, without reading the valve first, and is kept, also across a
+  restart, until Flo shows the valve closed by a reading made after it was
+  sent: read again 90 s after each send and sent again if needed (3 times,
+  then every 15 minutes), sent again when Flo answers after an outage,
+  waiting for the pause Flo asks for. It is given up 24 hours after it first
+  left without Flo showing the valve closed, as the integration status says.
+  Once seen closed, reopening the water in the Moen app is never fought.
+- Opening the valve stays off by default; when allowed, it is refused within
+  20 seconds of a shutoff of the same valve, cancelled by a shutoff asked
+  while it waits its turn, and an opening sent lets an older shutoff go.
+- Warning: the valve is a Gladys switch; a "turn everything off" command or
+  a scene acting on every switch can now shut the water off without any
+  option. Check your scenes and voice assistants.
+- Integration SDK 0.16.1 (no change for the devices).
+
+### Removed
+
+- The option "Allow closing the valve" (`allow_valve_close`): closing is
+  always allowed. A configuration that still holds it keeps working, the
+  value is ignored.
+
 ## [0.1.2] - 2026-10-23
 
 ## [0.1.1] - 2026-10-17

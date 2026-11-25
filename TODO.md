@@ -33,6 +33,23 @@ up to date at the end of every milestone.
 - [ ] **Milestone 4 — first release**: Docker image build check, Release
       workflow, topic, GHCR package public.
 
+## Next patch
+
+- **`getConfig()` failing in `connected`** (seen at the shutoff patch,
+  2026-11-25, existing before it): the handler logs "Start failed" and never
+  tries again, so the integration stays without credentials until the next
+  reconnection; a shutoff clicked meanwhile is kept but cannot leave. Retry
+  spaced without end, exact status, a test that fails it once.
+- **The valve is a `switch`/`binary` feature**: a "turn everything off" can
+  now shut the water off without any option (said in the docs). A dedicated
+  type would change the feature keys (external ids are forever): Louis's
+  call.
+- **The 24 h of a kept shutoff count per process** (monotonic clock, model
+  gladys-drop): a restart before the shutoff is seen closed starts them
+  again from its next send.
+- **Pause of a 429** is still compared with the wall clock (`pausedUntil`,
+  existing code), bounded for the shutoffs (Flo's longest pause).
+
 ## To check on a real account
 
 - Which sign-in a 2026 account accepts: the legacy `users/auth` (aioflo says
@@ -92,14 +109,22 @@ up to date at the end of every milestone.
   timer, except refused credentials (by design, the test button retries).
 - **User-Agent**: aioflo's browser User-Agent, Origin and Referer, kept as is
   (the only ones known to work with the Flo API).
-- **Valve safety (Louis's rule)**: `allow_valve_open` and `allow_valve_close`
-  both off by default, checked before anything and again when the command
-  gets its turn; commands serialized per device (promise chain covering the
-  read and the command); the device read again (`GET devices/{id}`) just
-  before acting; refused when that read fails, the device is offline
-  (`isConnected` not true), the valve is not `open`/`closed`, or its target
-  differs from its last known position (moving); nothing sent when already
-  in place; read back at 15 s and 60 s. The state in memory never decides.
+- **Valve safety (Louis's rules)**: closing shuts the water off, never
+  refused, behind no option (decision of 2026-11-25, model gladys-drop;
+  `allow_valve_close` removed, an old configuration holding it is ignored):
+  kept (memory, `/data/flo-shutoffs.json`) and sent again until a read
+  started after the send shows the valve closed (device online), 90 s after
+  each send, 3 times then every 15 min, at restart and after a Flo outage,
+  given up 24 h after the first send (monotonic, said in the status);
+  never in the chain of the device, it cancels an opening still waiting.
+  `allow_valve_open` off by default, checked before anything and again when
+  the opening gets its turn; openings serialized per device; the device read
+  again (`GET devices/{id}`) just before; refused when that read fails, the
+  device is offline (`isConnected` not true), the valve is not
+  `open`/`closed`, or its target differs from its last known position
+  (moving), within 20 s of a shutoff, or after a shutoff clicked since it
+  arrived; nothing sent when already open; an opening sent lets the shutoff
+  go; read back at 15 s and 60 s. The state in memory never decides.
 - **Mode**: Home/Away behind `allow_mode_change` (below), serialized per location, on a fresh
   read; sleep refused (needs a duration, set in the Moen app); a locked mode
   (`systemMode.isLocked`) refused. Exposed as an "away" switch (1 away, 0

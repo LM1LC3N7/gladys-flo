@@ -42,39 +42,62 @@ ou ne répond plus à cette adresse. Une fois Flo refusé, seule Moen est essay�
 jusqu'à une modification de la configuration. Vous pouvez forcer l'une ou
 l'autre.
 
-## Sécurité : commandes désactivées par défaut
+## Sécurité : fermeture toujours permise, le reste désactivé par défaut
+
+**Fermer la vanne coupe l'eau : c'est une protection, elle n'est jamais
+refusée et ne demande aucune option.** Une coupure (l'interrupteur de vanne
+mis à 0, ou l'action de scène « fermer ») :
+
+- part tout de suite, sans attendre une autre commande de la vanne ; une
+  ouverture qui attend encore son tour est annulée ;
+- est **gardée jusqu'à ce que Flo montre la vanne fermée** par une lecture
+  faite après son envoi (appareil en ligne). D'ici là elle est renvoyée : la
+  vanne est relue 90 secondes après chaque envoi et la coupure renvoyée si
+  elle n'est pas fermée, 3 fois, puis toutes les 15 minutes ; aussi après un
+  redémarrage de l'intégration (elle est gardée dans ses données) et quand
+  Flo répond de nouveau après une panne. Elle attend la pause que Flo demande
+  (trop de requêtes) et de nouveaux identifiants quand Flo les refuse ;
+- est **abandonnée 24 heures après son premier envoi** si Flo ne montre
+  toujours pas la vanne fermée, ce que dit le statut de l'intégration ; aussi
+  quand l'appareil est supprimé dans Gladys ou que Flo ne le connaît plus ;
+- une fois vue fermée, c'est terminé : rouvrir l'eau plus tard dans
+  l'application Moen n'est jamais contré.
+
+Si la coupure n'a pas pu partir chez Flo dans le temps que Gladys attend
+(3,5 secondes depuis le tableau de bord), Gladys affiche un message disant
+qu'elle est gardée et renvoyée. Une action de scène « fermer » n'échoue
+jamais pour cette raison : sa sortie « Commande envoyée » vaut alors faux.
 
 Ces commandes sont refusées tant que vous ne les autorisez pas dans la
 configuration :
 
 | Option                                        | Par défaut | Désactivée : Gladys…         |
 | --------------------------------------------- | ---------- | ---------------------------- |
-| Autoriser la fermeture de la vanne            | non        | ne ferme jamais l'eau        |
 | Autoriser l'ouverture de la vanne             | non        | ne rouvre jamais l'eau       |
 | Autoriser le changement de mode Maison/Absent | non        | ne change jamais le mode Flo |
 
-Pour couper l'eau depuis une scène en cas de fuite, activez « Autoriser la
-fermeture de la vanne ». Même autorisée, une commande de vanne :
+Même autorisée, une ouverture :
 
-- passe **une par une** pour un même appareil (deux « fermer » simultanés ne
-  sont jamais envoyés ensemble) ;
+- passe **une par une** pour un même appareil ;
 - relit l'appareil chez Flo **juste avant d'agir** : si cette lecture échoue,
-  si l'appareil est hors ligne, si la vanne bouge dans l'autre sens ou est
-  dans un état inconnu, la commande est **refusée** ; l'état gardé en mémoire
-  ne décide jamais ;
-- n'envoie rien si la vanne est déjà dans la position demandée, ou s'y rend
-  déjà ;
+  si l'appareil est hors ligne, si la vanne bouge ou est dans un état
+  inconnu, l'ouverture est **refusée** ; l'état gardé en mémoire ne décide
+  jamais ;
+- est refusée dans les 20 secondes qui suivent une coupure de la même vanne,
+  et annulée si une coupure est demandée pendant qu'elle attend son tour ;
+- n'envoie rien si la vanne est déjà ouverte, ou s'ouvre déjà ;
 - est **refusée plutôt qu'envoyée en retard** si elle n'a pas pu partir à
   temps (3,5 secondes après la demande depuis le tableau de bord, 25 secondes
   pour une action de scène) : Gladys aurait déjà affiché un échec ;
+- met fin à une coupure de la même vanne demandée avant elle (l'ouverture est
+  ce que vous avez demandé en dernier) ;
 - relit l'appareil 15 secondes puis 60 secondes après (même en cas d'échec),
   pour afficher la position réelle.
 
-**Attention : dès qu'une option de vanne est activée, la vanne est un
-interrupteur Gladys comme un autre.** Un assistant vocal, une commande
-« tout éteindre » ou une scène qui agit sur tous les interrupteurs peut alors
-fermer (ou ouvrir) l'eau. Vérifiez vos scènes et vos assistants avant
-d'activer ces options.
+**Attention : la vanne est un interrupteur Gladys comme un autre.** Un
+assistant vocal, une commande « tout éteindre » ou une scène qui agit sur
+tous les interrupteurs peut couper l'eau (toujours permis), et l'ouvrir une
+fois l'option activée. Vérifiez vos scènes et vos assistants.
 
 **Mode Maison / Absent** (interrupteur « Mode absent » ou action de scène) :
 désactivé par défaut. **Passer en Maison désarme la coupure automatique que
@@ -115,7 +138,8 @@ vanne) passant à 1. Cet état est relu à chaque rafraîchissement, même si un
 événement de scène a été manqué.
 
 Actions : **Flo : passer en Maison ou Absent** (un logement ou tous) et
-**Flo : ouvrir ou fermer la vanne**, soumises aux options ci-dessus.
+**Flo : ouvrir ou fermer la vanne** : la fermeture n'est jamais refusée,
+les autres sont soumises aux options ci-dessus.
 
 ## Limites d'usage
 
@@ -139,7 +163,6 @@ Actions : **Flo : passer en Maison ou Absent** (un logement ou tous) et
 | Option                                        | Défaut      | Rôle                                           |
 | --------------------------------------------- | ----------- | ---------------------------------------------- |
 | E-mail, mot de passe                          | —           | votre compte Flo / Moen Smartwater             |
-| Autoriser la fermeture de la vanne            | non         | voir « Sécurité »                              |
 | Autoriser l'ouverture de la vanne             | non         | voir « Sécurité »                              |
 | Autoriser le changement de mode Maison/Absent | non         | voir « Sécurité »                              |
 | Identification                                | Automatique | Flo puis Moen, ou l'une des deux               |

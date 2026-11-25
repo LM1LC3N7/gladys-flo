@@ -4,13 +4,20 @@
 // scene triggers on new alerts, the commands (valve, Home/Away) and the
 // badges. index.js only wires the SDK handlers to it (src/handlers.js).
 //
-// Valve safety (Louis's rule, not negotiable): opening and closing are off
-// until the user allows each of them; the commands of one device run one at
-// a time; the device is read again just before acting, and the command is
-// refused when that read fails or the valve is offline, moving or unknown.
-// A state kept in memory never decides a valve command. A command that could
-// not be sent while Gladys still waits for its answer is refused, never sent
-// late.
+// Valve safety (Louis's rules, not negotiable):
+//   - closing the valve shuts the water off: it protects, it is never
+//     refused and behind no option (decision of 2026-11-25). It is kept and
+//     sent again until a reading made after it shows the valve closed, for
+//     24 h at most (src/shutoff.js); it never waits behind another command
+//     and cancels an opening of the same valve still waiting its turn;
+//   - opening is off until the user allows it (`allow_valve_open`); the
+//     openings of one device run one at a time; the device is read again
+//     just before, and the opening is refused when that read fails or the
+//     valve is offline, moving or unknown, within 20 s of a shutoff of the
+//     same valve, or once a shutoff was clicked after it. A state kept in
+//     memory never decides it. An opening that could not be sent while
+//     Gladys still waits for its answer is refused, never sent late. An
+//     opening sent after a shutoff lets the shutoff go.
 //
 // Readings are numbered when their request starts: an older answer arriving
 // after a newer one is ignored. Scene triggers are computed by the refresh
@@ -31,7 +38,8 @@ import {
   valveAtRest,
 } from './flo/model.js';
 import { T, age, word } from './i18n.js';
-import { loadSeen, saveSeen } from './store.js';
+import { ShutoffKeeper } from './shutoff.js';
+import { loadSeen, loadShutoffs, saveSeen, saveShutoffs } from './store.js';
 import { alertEvents, seenOf } from './triggers.js';
 
 /** Errors after which only a change of the configuration (or the test button) helps. */
@@ -50,6 +58,7 @@ export class FloApp {
     gladys,
     logger = createLogger({ name: 'flo' }),
     now = Date.now,
+    monotonic = () => performance.now(),
     timers = defaultTimers,
     client,
     dataDir = '/data',
@@ -60,6 +69,23 @@ export class FloApp {
     this.timers = timers;
     this.client = client ?? new FloClient({ now });
     this.dataDir = dataDir;
+    /** The last status asked, before the shutoffs are added to it. */
+    this.rawStatus = undefined;
+    /** false while /data could not be read: the kept shutoffs are read again at each tick. */
+    this.shutoffsLoaded = false;
+    this.keeper = new ShutoffKeeper({
+      send: (entry) => this.sendShutoff(entry),
+      read: (entry) => this.read(entry.id),
+      ready: () => this.shutoffReady(),
+      save: (list) => saveShutoffs(this.dataDir, list),
+      onChange: () => this.statusAgain(),
+      onRateLimited: (err) => this.rateLimited(err),
+      logger,
+      timers,
+      monotonic,
+      wallNow: now,
+      timings: TIMINGS.shutoff,
+    });
     this.config = normalizeConfig();
     this.generation = 0;
     this.tickTimer = undefined;
@@ -130,6 +156,7 @@ export class FloApp {
     this.reset();
     this.seen = await loadSeen(this.dataDir);
     this.seenSaved = JSON.stringify([...this.seen]);
+    await this.loadShutoffs();
     this.client.configure({
       email: this.config.email,
       password: this.config.password,
@@ -143,11 +170,62 @@ export class FloApp {
     this.tickTimer = this.timers.setInterval(() => {
       this.tick().catch((err) => this.logger.error(`Flo refresh failed: ${err.message}`));
     }, TIMINGS.tickInterval);
+    // The shutoffs kept leave first (they wait for the same sign-in as the refresh).
+    this.keeper.fireAll();
     await this.refresh();
+  }
+
+  /** The shutoffs kept in /data before a restart, added to the ones in memory. */
+  async loadShutoffs() {
+    if (this.shutoffsLoaded) {
+      return;
+    }
+    const { ok, list, error } = await loadShutoffs(this.dataDir);
+    if (error) {
+      this.logger.warn(`Reading the shutoffs kept in ${this.dataDir} failed: ${error.message}`);
+    }
+    this.shutoffsLoaded = ok;
+    this.keeper.restore(list);
+    if (list.length > 0) {
+      this.statusAgain();
+    }
+  }
+
+  /** Can a shutoff leave now: never with refused credentials, after the pause Flo asked. */
+  shutoffReady() {
+    if (!this.client.hasCredentials || this.refused) {
+      return { blocked: true };
+    }
+    // Bounded: a wall clock set back never holds a shutoff longer than the longest pause.
+    const wait = Math.min(this.pausedUntil - this.now(), TIMINGS.rateLimitMax);
+    return wait > 0 ? { wait } : {};
+  }
+
+  /** One shutoff to Flo, then read back (15 s and 60 s) like any valve command. */
+  async sendShutoff(entry) {
+    try {
+      await this.client.setValve(entry.id, VALVE.CLOSED);
+    } finally {
+      if (!this.keeper.stopped) {
+        this.readBack([entry.id]);
+      }
+    }
+  }
+
+  /** Flo asked to slow down during a command: the refresh and the shutoffs wait too. */
+  rateLimited(err) {
+    const wait = clamp(
+      err.retryAfter ?? TIMINGS.rateLimitDefault,
+      TIMINGS.rateLimitMin,
+      TIMINGS.rateLimitMax,
+    );
+    this.pausedUntil = Math.max(this.pausedUntil, this.now() + wait);
+    this.nextRefreshAt = Math.max(this.nextRefreshAt, this.pausedUntil);
   }
 
   stop() {
     this.generation += 1;
+    this.keeper.stop();
     if (this.tickTimer) {
       this.timers.clearInterval(this.tickTimer);
       this.tickTimer = undefined;
@@ -168,11 +246,9 @@ export class FloApp {
     await this.configUpdated(raw);
     this.published = undefined;
     this.transports.clear();
-    const status = this.lastStatus;
     this.lastStatus = undefined;
-    if (status) {
-      const [connected, message] = JSON.parse(status);
-      await this.setStatus(connected, message ?? undefined);
+    if (this.rawStatus) {
+      await this.setStatus(...this.rawStatus);
     }
     await this.publishDevices();
     await this.publishTransports();
@@ -199,7 +275,10 @@ export class FloApp {
     }
   }
 
-  async setStatus(connected, message) {
+  /** The status, with the shutoffs kept or given up said after it. */
+  async setStatus(connected, rawMessage) {
+    this.rawStatus = [connected, rawMessage];
+    const message = this.withShutoffs(rawMessage);
     const key = JSON.stringify([connected, message ?? null]);
     if (key === this.lastStatus) {
       return;
@@ -210,10 +289,35 @@ export class FloApp {
       .catch((err) => this.logger.warn(`setConnectionStatus failed: ${err.message}`));
   }
 
+  withShutoffs(message) {
+    const { kept, held, givenUp } = this.keeper.summary();
+    if (kept === 0 && givenUp.length === 0) {
+      return message;
+    }
+    const base = message ?? { en: '', fr: '' };
+    const kept_ = kept > 0 ? T.shutoffsKept(kept, held) : { en: '', fr: '' };
+    const lost = givenUp.length > 0 ? T.shutoffsGivenUp(givenUp.join(', ')) : { en: '', fr: '' };
+    return {
+      en: `${base.en}${kept_.en}${lost.en}`.trim(),
+      fr: `${base.fr}${kept_.fr}${lost.fr}`.trim(),
+    };
+  }
+
+  /** A shutoff kept, held, done or given up: the status says it again. */
+  statusAgain() {
+    if (this.rawStatus) {
+      this.setStatus(...this.rawStatus).catch(() => {});
+    }
+  }
+
   // --- Refresh ---------------------------------------------------------------
 
   /** Every minute: a refresh when one is due. */
   async tick() {
+    if (!this.shutoffsLoaded) {
+      await this.loadShutoffs();
+      this.keeper.fireAll();
+    }
     if (this.now() >= this.nextRefreshAt && this.now() >= this.pausedUntil) {
       await this.refresh();
     }
@@ -306,6 +410,11 @@ export class FloApp {
       this.skipped = skipped;
       this.readAt = this.now();
       this.nextRefreshAt = this.readAt + this.config.refreshInterval * 60_000;
+      if (this.failures > 0 || this.keeper.blocked) {
+        // Flo answers again after a failure, or accepts the account again
+        // (test button): the shutoffs kept leave again.
+        this.keeper.fireAll();
+      }
       this.failures = 0;
       this.offline = false;
       await this.publishDevices();
@@ -329,11 +438,22 @@ export class FloApp {
    */
   async read(id, options) {
     const seq = ++this.readSeq;
+    // Taken before the request: only a read started after a shutoff left confirms it.
+    const ticket = this.keeper.ticket();
     const reading = readingOf(await this.client.device(id, options));
     reading.id ||= String(id);
     reading.locationId ??= this.locationOf.get(reading.id);
     reading.seq = seq;
     this.update(reading);
+    if (reading.kind === 'shutoff') {
+      this.keeper.observe(
+        String(id),
+        reading.connected === true && reading.valve === VALVE.CLOSED,
+        ticket,
+      );
+    } else {
+      this.keeper.letGo(String(id), 'given up: this Flo device has no valve');
+    }
     return reading;
   }
 
@@ -583,6 +703,10 @@ export class FloApp {
 
   async deviceDeleted(device) {
     this.transports.delete(device?.external_id);
+    const target = parseExternalId(device?.external_id);
+    if (target) {
+      this.keeper.letGo(target.id, 'given up: the device was deleted in Gladys');
+    }
   }
 
   /** The Discovery tab asks for a scan: a refresh if the last one is old enough. */
@@ -669,25 +793,71 @@ export class FloApp {
   }
 
   /**
-   * Opens (`open` true) or closes a shutoff valve, behind the options, one
-   * command at a time per device, on a state read just now, sent before
-   * `deadline` or not at all. Resolves `{ device, valve, changed }`.
+   * Opens (`open` true) or closes a shutoff valve. Resolves `{ device,
+   * valve, changed }` (`device` undefined for a shutoff of a device not read
+   * yet); `kept` for a shutoff not sent yet.
    */
-  setValve(id, open, { deadline = this.now() + TIMINGS.sceneActionDeadline } = {}) {
-    if (open && !this.config.allowValveOpen) {
+  setValve(id, open, options = {}) {
+    return open ? this.openValve(id, options) : this.closeValve(id, options);
+  }
+
+  /**
+   * The shutoff: behind no option, nothing read before it leaves, never in
+   * the chain of the device (an opening still waiting there is cancelled).
+   * Kept until a later reading shows the valve closed (src/shutoff.js).
+   * Gladys gets its answer by `deadline`: sent, or kept and sent again.
+   */
+  async closeValve(id, { deadline = this.now() + TIMINGS.sceneActionDeadline } = {}) {
+    id = String(id);
+    const known = this.devices.get(id);
+    if (known && known.kind !== 'shutoff') {
+      throw this.denied('noValve');
+    }
+    const name = known ? deviceName(known, this.config.language) : `Flo ${id}`;
+    const sending = this.keeper.click(id, name);
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = this.timers.setTimeout(() => resolve('late'), Math.max(0, deadline - this.now()));
+    });
+    const outcome = await Promise.race([sending, late]);
+    this.timers.clearTimeout(timer);
+    if (known) {
+      this.background(this.publishDevice(id));
+    }
+    if (outcome === 'sent') {
+      this.logger.info(`Valve of ${name}: closed requested`);
+      return { device: known, valve: VALVE.CLOSED, changed: true };
+    }
+    return { device: known, valve: known?.valve ?? 'unknown', changed: false, kept: outcome };
+  }
+
+  /**
+   * The opening: behind `allow_valve_open`, one command at a time per
+   * device, on a state read just now, sent before `deadline` or not at all,
+   * never after a shutoff clicked since it arrived.
+   */
+  openValve(id, { deadline = this.now() + TIMINGS.sceneActionDeadline } = {}) {
+    if (!this.config.allowValveOpen) {
       return Promise.reject(this.denied('valveOpen'));
     }
-    if (!open && !this.config.allowValveClose) {
-      return Promise.reject(this.denied('valveClose'));
+    if (this.keeper.justClicked(id)) {
+      return Promise.reject(this.denied('closeJustClicked'));
     }
+    const clicks = this.keeper.clickCount(id);
+    const cancelled = () => {
+      if (this.keeper.clickCount(id) !== clicks) {
+        throw this.denied('cancelledByClose');
+      }
+    };
     return this.serialized(`valve:${id}`, async () => {
+      cancelled();
       const known = this.knownDevice(id);
       if (known.kind !== 'shutoff') {
         throw this.denied('noValve');
       }
-      // The options may have changed while the command waited for its turn.
-      if ((open && !this.config.allowValveOpen) || (!open && !this.config.allowValveClose)) {
-        throw this.denied(open ? 'valveOpen' : 'valveClose');
+      // The option may have changed while the command waited for its turn.
+      if (!this.config.allowValveOpen) {
+        throw this.denied('valveOpen');
       }
       const options = this.commandOptions(deadline);
       options.check();
@@ -698,11 +868,13 @@ export class FloApp {
         this.logger.warn(`Valve of ${deviceName(known, 'en')}: state not read (${err.message})`);
         throw this.denied('valveUnknown');
       }
-      const target = open ? VALVE.OPEN : VALVE.CLOSED;
+      cancelled();
+      const target = VALVE.OPEN;
       try {
         if (device.connected === true && device.valveTarget === target) {
-          // Already at the target, or already moving to it: nothing to send;
-          // the real position is returned, and followed until it gets there.
+          // Already open, or already opening: nothing to send; the real
+          // position is returned, and followed until it gets there.
+          this.keeper.letGo(id, 'let go: the valve is opened from Gladys after it');
           if (device.valve !== target) {
             this.readBack([id]);
           }
@@ -716,16 +888,28 @@ export class FloApp {
           throw this.denied('valveUnknown');
         }
         if (current === target) {
+          this.keeper.letGo(id, 'let go: the valve is opened from Gladys after it');
           return { device, valve: current, changed: false };
         }
         try {
-          await this.client.setValve(id, target, options.post);
+          await this.client.setValve(id, target, {
+            ...options.post,
+            // Checked right before the request leaves: too late, or a shutoff clicked since.
+            guard: () => {
+              options.post.guard();
+              cancelled();
+            },
+          });
         } catch (err) {
           // It may have reached the valve all the same: read it back.
           this.readBack([id]);
           throw err;
         }
         this.logger.info(`Valve of ${deviceName(device, 'en')}: ${target} requested`);
+        // Sent after the last shutoff of this valve: that shutoff is not fought for.
+        if (this.keeper.clickCount(id) === clicks) {
+          this.keeper.letGo(id, 'let go by an opening sent after it');
+        }
         this.readBack([id]);
         return { device, valve: target, changed: true };
       } finally {
@@ -797,7 +981,11 @@ export class FloApp {
     }
     try {
       if (target.role === 'valve') {
-        await this.setValve(target.id, on === 1, { deadline });
+        const result = await this.setValve(target.id, on === 1, { deadline });
+        if (result.kept) {
+          // Not sent yet: Gladys shows why, the shutoff still leaves.
+          throw this.denied(result.kept === 'blocked' ? 'closeKeptRefused' : 'closeKept');
+        }
       } else {
         await this.setMode(target.id, on === 1 ? MODES.AWAY : MODES.HOME, { deadline });
       }
@@ -820,9 +1008,12 @@ export class FloApp {
     if (fields.action !== 'open' && fields.action !== 'close') {
       throw this.denied('badAction');
     }
+    // A shutoff not sent yet is not an error of the scene: it is kept and sent again.
     const result = await this.setValve(target.id, fields.action === 'open', { deadline });
     return {
-      device_name: deviceName(result.device, this.config.language),
+      device_name: result.device
+        ? deviceName(result.device, this.config.language)
+        : `Flo ${target.id}`,
       valve: result.valve,
       changed: result.changed,
     };

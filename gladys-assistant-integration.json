@@ -21,8 +21,8 @@
         "fr": "Votre compte Flo by Moen"
       },
       "description": {
-        "en": "Brings the Flo by Moen Smart Water Shutoff (flow, pressure, water temperature, today's use, valve, Home/Away mode, alerts) and the Flo Water Sensors (leak, temperature, humidity, battery) into Gladys, through the Flo cloud the Moen Smartwater app uses (US and Canada products). Enter the e-mail and password of your Flo or Moen account. Scene triggers fire on new leak and abnormal flow alerts. Opening or closing the valve and changing the mode stay off until you allow them below. Unofficial, not affiliated with Moen or Fortune Brands; never tested on a real device yet.",
-        "fr": "Amène dans Gladys la vanne d'arrêt Flo by Moen Smart Water Shutoff (débit, pression, température de l'eau, consommation du jour, vanne, mode Maison/Absent, alertes) et les détecteurs de fuite Flo Water Sensor (fuite, température, humidité, batterie), par le cloud Flo qu'utilise l'application Moen Smartwater (produits des États-Unis et du Canada). Saisissez l'e-mail et le mot de passe de votre compte Flo ou Moen. Des déclencheurs de scène réagissent aux nouvelles alertes de fuite et de débit anormal. L'ouverture, la fermeture de la vanne et le changement de mode restent désactivés tant que vous ne les autorisez pas ci-dessous. Non officiel, sans lien avec Moen ni Fortune Brands ; jamais testé sur un vrai appareil."
+        "en": "Brings the Flo by Moen Smart Water Shutoff (flow, pressure, water temperature, today's use, valve, Home/Away mode, alerts) and the Flo Water Sensors (leak, temperature, humidity, battery) into Gladys, through the Flo cloud the Moen Smartwater app uses (US and Canada products). Enter the e-mail and password of your Flo or Moen account. Scene triggers fire on new leak and abnormal flow alerts. Closing the valve (shutting the water off) is always allowed; opening it and changing the mode stay off until you allow them below. Unofficial, not affiliated with Moen or Fortune Brands; never tested on a real device yet.",
+        "fr": "Amène dans Gladys la vanne d'arrêt Flo by Moen Smart Water Shutoff (débit, pression, température de l'eau, consommation du jour, vanne, mode Maison/Absent, alertes) et les détecteurs de fuite Flo Water Sensor (fuite, température, humidité, batterie), par le cloud Flo qu'utilise l'application Moen Smartwater (produits des États-Unis et du Canada). Saisissez l'e-mail et le mot de passe de votre compte Flo ou Moen. Des déclencheurs de scène réagissent aux nouvelles alertes de fuite et de débit anormal. Fermer la vanne (couper l'eau) est toujours permis ; l'ouverture et le changement de mode restent désactivés tant que vous ne les autorisez pas ci-dessous. Non officiel, sans lien avec Moen ni Fortune Brands ; jamais testé sur un vrai appareil."
       },
       "links": [
         {
@@ -66,20 +66,6 @@
         "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à Flo/Moen (HTTPS)."
       },
       "required": true
-    },
-    {
-      "key": "allow_valve_close",
-      "type": "boolean",
-      "label": {
-        "en": "Allow closing the valve from Gladys",
-        "fr": "Autoriser la fermeture de la vanne depuis Gladys"
-      },
-      "description": {
-        "en": "Off by default. Turn it on to shut the water off from a scene when a leak is detected.",
-        "fr": "Désactivé par défaut. Activez-le pour couper l'eau depuis une scène quand une fuite est détectée."
-      },
-      "required": false,
-      "default": false
     },
     {
       "key": "allow_valve_open",
@@ -585,8 +571,8 @@
         "fr": "Flo : ouvrir ou fermer la vanne"
       },
       "description": {
-        "en": "Needs the matching option in the configuration; the valve state is read again just before.",
-        "fr": "Demande l'option correspondante dans la configuration ; l'état de la vanne est relu juste avant."
+        "en": "Closing is never refused: kept and sent again until Flo shows the valve closed. Opening needs its option; the valve is read again just before.",
+        "fr": "La fermeture n'est jamais refusée : gardée et renvoyée jusqu'à ce que Flo montre la vanne fermée. L'ouverture demande son option ; la vanne est relue juste avant."
       },
       "timeout_seconds": 30,
       "fields": [
